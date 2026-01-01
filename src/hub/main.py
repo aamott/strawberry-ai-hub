@@ -9,7 +9,13 @@ import uvicorn
 
 from .config import settings
 from .database import init_db
-from .routers import auth_router, chat_router, skills_router, devices_router
+from .routers import (
+    auth_router,
+    chat_router,
+    skills_router,
+    devices_router,
+    websocket_router,
+)
 
 
 @asynccontextmanager
@@ -51,6 +57,7 @@ app.include_router(auth_router)
 app.include_router(chat_router)
 app.include_router(skills_router)
 app.include_router(devices_router)
+app.include_router(websocket_router)
 
 
 @app.get("/")

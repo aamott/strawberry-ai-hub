@@ -1,7 +1,7 @@
 """Skill registry endpoints."""
 
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import List, Optional, Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select, delete
@@ -25,6 +25,15 @@ class SkillInfo(BaseModel):
 class SkillRegisterRequest(BaseModel):
     """Request to register skills."""
     skills: List[SkillInfo]
+
+
+class SkillExecuteRequest(BaseModel):
+    """Request to execute a remote skill."""
+    device_name: str
+    skill_name: str
+    method_name: str
+    args: List[Any] = []
+    kwargs: dict = {}
 
 
 class SkillResponse(BaseModel):
@@ -102,6 +111,66 @@ async def heartbeat(
         "message": f"Heartbeat updated for {len(skills)} skills",
         "timestamp": now.isoformat(),
     }
+
+
+@router.post("/execute")
+async def execute_skill(
+    request: SkillExecuteRequest,
+    device: Device = Depends(get_current_device),
+    db: AsyncSession = Depends(get_db),
+):
+    """Execute a skill on a remote device via WebSocket.
+    
+    Routes the skill call to the target device through the WebSocket connection.
+    """
+    # Import here to avoid circular dependency
+    from .websocket import connection_manager
+    
+    # Find target device by name (must be same user)
+    result = await db.execute(
+        select(Device)
+        .where(Device.name == request.device_name)
+        .where(Device.user_id == device.user_id)
+    )
+    target_device = result.scalar_one_or_none()
+    
+    if not target_device:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Device '{request.device_name}' not found or not accessible"
+        )
+    
+    # Check if device is connected
+    if not connection_manager.is_connected(target_device.id):
+        raise HTTPException(
+            status_code=503,
+            detail=f"Device '{request.device_name}' is not currently connected"
+        )
+    
+    # Execute skill via WebSocket
+    try:
+        result = await connection_manager.send_skill_request(
+            device_id=target_device.id,
+            skill_name=request.skill_name,
+            method_name=request.method_name,
+            args=request.args,
+            kwargs=request.kwargs,
+            timeout=30.0,
+        )
+        
+        return {
+            "success": True,
+            "result": result,
+        }
+    
+    except TimeoutError as e:
+        raise HTTPException(status_code=504, detail=str(e))
+    
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+        }
 
 
 @router.get("", response_model=SkillListResponse)

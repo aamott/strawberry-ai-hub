@@ -22,6 +22,22 @@ strawberry-hub
 uvicorn hub.main:app --reload
 ```
 
+## Frontend Setup
+
+The frontend is included in the repository as pre-built static files in the `frontend/dist` directory. The backend automatically serves these files when present.
+
+### Building the Frontend (if you make changes)
+
+If you modify the frontend source code, you'll need to rebuild it:
+
+```bash
+cd frontend
+npm install
+npm run build
+```
+
+This will update the `dist` directory with your changes. Make sure to commit the updated `dist` files if you want others to see your changes.
+
 ## API Endpoints
 
 ### Authentication

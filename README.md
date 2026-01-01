@@ -31,6 +31,10 @@ The frontend is included in the repository as pre-built static files in the `fro
 If you modify the frontend source code, you'll need to rebuild it:
 
 ```bash
+# Option 1: Using the build script
+./scripts/build_frontend.sh
+
+# Option 2: Manual build
 cd frontend
 npm install
 npm run build

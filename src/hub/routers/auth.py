@@ -69,9 +69,9 @@ async def register_device(
     
     # Create JWT access token
     access_token = create_access_token(
-        device_id=device_id,
-        user_id=request.user_id,
-        device_name=request.name,
+        subject=device_id,
+        subject_type="device",
+        name=request.name,
     )
     
     return DeviceRegisterResponse(
@@ -102,9 +102,9 @@ async def refresh_token(
 ):
     """Refresh the access token."""
     access_token = create_access_token(
-        device_id=device.id,
-        user_id=device.user_id,
-        device_name=device.name,
+        subject=device.id,
+        subject_type="device",
+        name=device.name,
     )
     
     return {"access_token": access_token}

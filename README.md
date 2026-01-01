@@ -44,7 +44,13 @@ uvicorn hub.main:app --reload
 
 ## Configuration
 
-Create a `.env` file:
+1. **Environment Setup**: Copy `.env.example` to `.env` and fill in your settings:
+   ```bash
+   cp .env.example .env
+   ```
+   Then edit `.env` with your actual API keys and configuration.
+
+2. **Example Configuration**: Here's what a basic `.env` file looks like:
 
 ```bash
 # Server

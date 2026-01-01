@@ -113,10 +113,79 @@ async def login(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
     return {"access_token": access_token, "token_type": "bearer"}
 
 
+
 @router.get("/users/me", response_model=UserResponse)
 async def get_me(user: User = Depends(get_current_user)):
     """Get current user info."""
     return user
+
+
+
+@router.post("/users", response_model=UserResponse)
+async def create_user(
+    user_in: UserCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Create a new user (admin only)."""
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin required")
+
+    # Check for existing user
+    result = await db.execute(select(User).where(User.username == user_in.username))
+    if result.scalar_one_or_none():
+         raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username already registered"
+        )
+
+    user = User(
+        id=str(uuid.uuid4()),
+        username=user_in.username,
+        hashed_password=get_password_hash(user_in.password),
+        is_admin=True, # For now, all created users are admins
+    )
+    db.add(user)
+    await db.commit()
+    return user
+
+
+@router.get("/users", response_model=List[UserResponse])
+async def get_users(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """List all users."""
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin required")
+    
+    result = await db.execute(select(User))
+    return result.scalars().all()
+
+
+@router.delete("/users/{user_id}")
+async def delete_user(
+    user_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Delete a user."""
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin required")
+        
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+        
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    await db.delete(user)
+    await db.commit()
+    return {"status": "deleted"}
+
 
 
 # --- Config Management ---
@@ -165,6 +234,7 @@ async def get_tensorzero_config(user: User = Depends(get_current_user)):
         return {"content": "# tensorzero.toml\n[gateway]\n# Add configuration here\n"}
 
 
+
 @router.post("/config/tensorzero")
 async def update_tensorzero_config(
     config: ConfigUpdate,
@@ -178,3 +248,98 @@ async def update_tensorzero_config(
         f.write(config.content)
         
     return {"status": "updated"}
+
+
+# --- Device Management ---
+
+from ..database import Device # Import locally if needed, or better at top
+
+class DeviceCreate(BaseModel):
+    name: str
+
+class DeviceResponse(BaseModel):
+    id: str
+    name: str
+    is_active: bool
+    last_seen: datetime | None = None
+    created_at: datetime
+
+class DeviceTokenResponse(BaseModel):
+    device: DeviceResponse
+    token: str
+    command: str
+
+@router.get("/devices", response_model=List[DeviceResponse])
+async def get_devices(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """List all devices."""
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin required")
+    
+    result = await db.execute(select(Device))
+    return result.scalars().all()
+
+
+@router.post("/devices/token", response_model=DeviceTokenResponse)
+async def create_device_token(
+    device_in: DeviceCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Register a new device and generate an enrollment token."""
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin required")
+    
+    # Create device
+    device_id = str(uuid.uuid4())
+    device = Device(
+        id=device_id,
+        name=device_in.name,
+        user_id=current_user.id,
+        hashed_token="jwt-auth", # Placeholder as we use JWTs
+        is_active=True,
+    )
+    db.add(device)
+    await db.commit()
+    
+    # Generate JWT
+    access_token = create_access_token(
+        subject=device.id,
+        subject_type="device",
+        name=device.name,
+        expires_delta=None # Never expire (or default to infinite/long)
+    )
+    
+    hub_url = "http://localhost:8000" # TODO: Make dynamic or configurable
+    # Using export for env vars as Spoke supports .env/env vars
+    command = f"export STRAWBERRY_HUB_URL={hub_url} STRAWBERRY_DEVICE_TOKEN={access_token} && python -m strawberry.main"
+    
+    return {
+        "device": device,
+        "token": access_token,
+        "command": command
+    }
+
+
+@router.delete("/devices/{device_id}")
+async def delete_device(
+    device_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Revoke device access."""
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin required")
+        
+    result = await db.execute(select(Device).where(Device.id == device_id))
+    device = result.scalar_one_or_none()
+    
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+        
+    await db.delete(device)
+    await db.commit()
+    return {"status": "deleted"}
+

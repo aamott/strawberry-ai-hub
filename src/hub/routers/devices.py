@@ -1,127 +1,115 @@
-"""Device management endpoints."""
+import uuid
+from datetime import datetime
+from typing import List
 
-from datetime import datetime, timedelta
-from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..config import settings
-from ..database import Device, Skill, get_db
-from ..auth import get_current_device
+from ..auth import User, get_current_user, create_access_token
+from ..database import get_db, Device
 
-router = APIRouter(prefix="/devices", tags=["devices"])
+router = APIRouter(prefix="/api/devices", tags=["devices"])
 
+# --- Models ---
+
+class DeviceCreate(BaseModel):
+    name: str
 
 class DeviceResponse(BaseModel):
-    """Device information."""
     id: str
     name: str
     is_active: bool
-    is_online: bool
-    last_seen: Optional[datetime]
-    skill_count: int
+    last_seen: datetime | None = None
+    created_at: datetime
 
+class DeviceTokenResponse(BaseModel):
+    device: DeviceResponse
+    token: str
+    command: str
 
-class DeviceListResponse(BaseModel):
-    """List of devices."""
-    devices: List[DeviceResponse]
-    total: int
+# --- Endpoints ---
 
-
-@router.get("", response_model=DeviceListResponse)
-async def list_devices(
-    device: Device = Depends(get_current_device),
+@router.get("", response_model=List[DeviceResponse])
+async def get_my_devices(
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    """List all devices for the current user."""
-    # Get all devices for this user
-    result = await db.execute(
-        select(Device).where(Device.user_id == device.user_id)
-    )
-    devices = result.scalars().all()
+    """List devices owned by the current user."""
+    # Admins see ALL devices? Or just their own?
+    # Requirement: "Regular users only get access to their own settings"
+    # Let's start strict: You only see YOUR devices. 
+    # Admins can use the separate admin router if they need a global view.
     
-    # Get skill counts
-    expiry_time = datetime.utcnow() - timedelta(seconds=settings.skill_expiry_seconds)
-    
-    device_responses = []
-    for d in devices:
-        # Count non-expired skills
-        result = await db.execute(
-            select(Skill)
-            .where(Skill.device_id == d.id)
-            .where(Skill.last_heartbeat > expiry_time)
-        )
-        skill_count = len(result.scalars().all())
-        
-        # Determine if device is "online" (seen recently)
-        is_online = False
-        if d.last_seen:
-            is_online = (datetime.utcnow() - d.last_seen).total_seconds() < 300  # 5 min
-        
-        device_responses.append(DeviceResponse(
-            id=d.id,
-            name=d.name,
-            is_active=d.is_active,
-            is_online=is_online,
-            last_seen=d.last_seen,
-            skill_count=skill_count,
-        ))
-    
-    return DeviceListResponse(
-        devices=device_responses,
-        total=len(device_responses),
-    )
+    result = await db.execute(select(Device).where(Device.user_id == current_user.id))
+    return result.scalars().all()
 
 
-@router.get("/{device_id}")
-async def get_device(
+@router.post("/token", response_model=DeviceTokenResponse)
+async def create_device_token(
+    device_in: DeviceCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Register a new device for the current user."""
+    
+    # Create device linked to current_user
+    device_id = str(uuid.uuid4())
+    device = Device(
+        id=device_id,
+        name=device_in.name,
+        user_id=current_user.id, # Link to creator
+        hashed_token="jwt-auth", 
+        is_active=True,
+    )
+    db.add(device)
+    await db.commit()
+    
+    # Generate JWT for the device
+    access_token = create_access_token(
+        subject=device.id,
+        subject_type="device",
+        name=device.name,
+        expires_delta=None # Long-lived
+    )
+    
+    # Generate connection command
+    # We default to localhost if not specified, but in prod this should be the real URL
+    hub_url = "http://localhost:8000" 
+    
+    # Command supporting the new Spoke loader
+    command = f"export STRAWBERRY_HUB_URL={hub_url} STRAWBERRY_DEVICE_TOKEN={access_token} && python -m strawberry.main"
+    
+    return {
+        "device": device,
+        "token": access_token,
+        "command": command
+    }
+
+
+@router.delete("/{device_id}")
+async def delete_device(
     device_id: str,
-    current_device: Device = Depends(get_current_device),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    """Get details for a specific device."""
+    """Delete a device owned by the current user."""
+    
+    # Find device checking ownership
     result = await db.execute(
-        select(Device).where(Device.id == device_id)
+        select(Device).where(
+            Device.id == device_id,
+            Device.user_id == current_user.id
+        )
     )
     device = result.scalar_one_or_none()
     
     if not device:
+        # If admin, maybe allow deleting any device?
+        # For now, stick to ownership rules or 404 to avoid leaking existence
         raise HTTPException(status_code=404, detail="Device not found")
-    
-    # Check access (must be same user)
-    if device.user_id != current_device.user_id:
-        raise HTTPException(status_code=403, detail="Access denied")
-    
-    # Get skills
-    expiry_time = datetime.utcnow() - timedelta(seconds=settings.skill_expiry_seconds)
-    result = await db.execute(
-        select(Skill)
-        .where(Skill.device_id == device.id)
-        .where(Skill.last_heartbeat > expiry_time)
-    )
-    skills = result.scalars().all()
-    
-    is_online = False
-    if device.last_seen:
-        is_online = (datetime.utcnow() - device.last_seen).total_seconds() < 300
-    
-    return {
-        "id": device.id,
-        "name": device.name,
-        "user_id": device.user_id,
-        "is_active": device.is_active,
-        "is_online": is_online,
-        "last_seen": device.last_seen,
-        "created_at": device.created_at,
-        "skills": [
-            {
-                "class_name": s.class_name,
-                "function_name": s.function_name,
-                "signature": s.signature,
-            }
-            for s in skills
-        ],
-    }
-
+        
+    await db.delete(device)
+    await db.commit()
+    return {"status": "deleted"}

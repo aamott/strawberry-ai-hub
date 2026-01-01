@@ -15,7 +15,7 @@ export function SettingsPage() {
     const loadConfig = async (type: string) => {
         setLoading(true);
         try {
-            const res = await api.get(`/config/${type}`);
+            const res = await api.get(`/admin/config/${type}`);
             setContent(res.data.content);
         } catch (err) {
             toast({
@@ -31,7 +31,7 @@ export function SettingsPage() {
     const saveConfig = async () => {
         setLoading(true);
         try {
-            await api.post(`/config/${activeTab}`, { content });
+            await api.post(`/admin/config/${activeTab}`, { content });
             toast({
                 title: "Saved",
                 description: "Configuration updated successfully",

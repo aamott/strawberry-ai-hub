@@ -2,7 +2,7 @@ import axios from "axios";
 
 // Create axios instance
 export const api = axios.create({
-    baseURL: "/api/admin", // Using relative path since we'll serve from FastAPI
+    baseURL: "/api", // Base API path
     headers: {
         "Content-Type": "application/json",
     },

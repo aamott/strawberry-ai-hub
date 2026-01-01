@@ -14,7 +14,7 @@ export function Overview() {
         const fetchData = async () => {
             try {
                 const [usersRes, devicesRes] = await Promise.all([
-                    api.get("/users"),
+                    api.get("/admin/users"),
                     api.get("/devices"),
                 ]);
 

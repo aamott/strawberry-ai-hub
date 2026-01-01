@@ -3,7 +3,7 @@
 import sys
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
@@ -72,15 +72,6 @@ frontend_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__fi
 if os.path.exists(frontend_dir):
     app.mount("/assets", StaticFiles(directory=os.path.join(frontend_dir, "assets")), name="assets")
 
-    @app.get("/{full_path:path}")
-    async def serve_spa(full_path: str):
-        # Allow API calls to pass through
-        if full_path.startswith("api") or full_path.startswith("docs") or full_path.startswith("openapi.json"):
-             raise HTTPException(status_code=404)
-        
-        # Serve index.html for all other routes
-        return FileResponse(os.path.join(frontend_dir, "index.html"))
-
 @app.get("/api/health")
 async def root():
     """Root endpoint - basic info."""
@@ -95,6 +86,19 @@ async def root():
 async def health():
     """Health check endpoint."""
     return {"status": "healthy"}
+
+
+# Serve SPA - catch all other routes
+# Must be defined LAST locally to avoid shadowing other routes
+if os.path.exists(frontend_dir):
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        # Allow API calls to pass through (if they weren't caught by routers above)
+        if full_path.startswith("api") or full_path.startswith("docs") or full_path.startswith("openapi.json"):
+             raise HTTPException(status_code=404)
+        
+        # Serve index.html for all other routes
+        return FileResponse(os.path.join(frontend_dir, "index.html"))
 
 
 def main():

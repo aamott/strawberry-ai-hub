@@ -14,7 +14,7 @@ export function Login() {
 
     useEffect(() => {
         // Check if setup is needed
-        api.get("/users/count").then((res) => {
+        api.get("/admin/users/count").then((res) => {
             if (res.data === 0) {
                 navigate("/setup");
             }
@@ -27,7 +27,7 @@ export function Login() {
         e.preventDefault();
         try {
             // Corrected endpoint from /users/login to /login
-            const response = await api.post("/login", { username, password });
+            const response = await api.post("/admin/login", { username, password });
             setAuthToken(response.data.access_token);
             navigate("/");
         } catch (err: any) {

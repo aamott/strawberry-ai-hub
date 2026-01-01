@@ -15,7 +15,7 @@ export function Dashboard() {
     useEffect(() => {
         // Only check if we haven't already
         if (!user) {
-            api.get("/users/me")
+            api.get("/admin/users/me")
                 .then((res) => setUser(res.data))
                 .catch(() => navigate("/login"));
         }
@@ -27,22 +27,24 @@ export function Dashboard() {
     };
 
     const navItems = [
-        { icon: LayoutDashboard, label: "Overview", href: "/" },
-        { icon: Users, label: "Users", href: "/users" },
-        { icon: Cpu, label: "Devices", href: "/devices" },
-        { icon: Settings, label: "Settings", href: "/settings" },
+        { icon: LayoutDashboard, label: "Overview", href: "/", adminOnly: false },
+        { icon: Cpu, label: "My Devices", href: "/devices", adminOnly: false },
+        { icon: Users, label: "Users", href: "/users", adminOnly: true },
+        { icon: Settings, label: "Settings", href: "/settings", adminOnly: true },
     ];
 
     if (!user) return null;
+
+    const visibleItems = navItems.filter(item => !item.adminOnly || user.is_admin);
 
     const NavContent = () => (
         <>
             <div className="p-6">
                 <h1 className="text-xl font-bold">🍓 Strawberry AI</h1>
-                <p className="text-xs text-muted-foreground mt-1">Hub Admin</p>
+                <p className="text-xs text-muted-foreground mt-1">{user.is_admin ? "Hub Admin" : "User Portal"}</p>
             </div>
             <nav className="space-y-1 px-4">
-                {navItems.map((item) => (
+                {visibleItems.map((item) => (
                     <Link
                         key={item.href}
                         to={item.href}
@@ -64,7 +66,7 @@ export function Dashboard() {
                     </div>
                     <div className="overflow-hidden">
                         <p className="text-sm font-medium truncate">{user.username}</p>
-                        <p className="text-xs text-muted-foreground">Admin</p>
+                        <p className="text-xs text-muted-foreground">{user.is_admin ? "Administrator" : "User"}</p>
                     </div>
                 </div>
                 <Button variant="outline" className="w-full justify-start" onClick={handleLogout}>

@@ -97,7 +97,26 @@ class Message(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     
     # Relationships
+    # Relationships
     session: Mapped["Session"] = relationship(back_populates="messages")
+
+
+class User(Base):
+    """Admin user."""
+    
+    __tablename__ = "users"
+    
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    hashed_password: Mapped[str] = mapped_column(String(255))
+    
+    # Permissions
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_login: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
 # Database engine and session factory (created lazily)

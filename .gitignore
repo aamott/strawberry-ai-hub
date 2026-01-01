@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+.venv
+*.egg-info
+
+# Data
+data/
+*.db
+
+# Environment variables
+.env

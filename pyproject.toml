@@ -1,0 +1,73 @@
+[project]
+name = "strawberry-hub"
+version = "0.1.0"
+description = "Hub server for Strawberry AI platform"
+requires-python = ">=3.10"
+readme = "README.md"
+
+dependencies = [
+    # Web framework
+    "fastapi>=0.104",
+    "uvicorn[standard]>=0.24",
+    
+    # Authentication
+    "python-jose[cryptography]>=3.3",
+    "passlib[bcrypt]>=1.7",
+    
+    # Database
+    "sqlalchemy>=2.0",
+    "aiosqlite>=0.19",  # Async SQLite for dev
+    
+    # Configuration
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+    
+    # LLM
+    "openai>=1.0",
+]
+
+[project.optional-dependencies]
+postgres = [
+    "asyncpg>=0.29",
+    "psycopg2-binary>=2.9",
+]
+mqtt = [
+    "aiomqtt>=2.0",
+]
+tensorzero = [
+    "tensorzero>=0.1.0",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "pytest-timeout>=2.0",
+    "httpx>=0.25",  # For testing FastAPI
+    "ruff>=0.1",
+]
+all = [
+    "strawberry-hub[postgres,mqtt,tensorzero,dev]",
+]
+
+[project.scripts]
+strawberry-hub = "hub.main:main"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+timeout = 10  # 10 second timeout per test
+timeout_method = "thread"
+

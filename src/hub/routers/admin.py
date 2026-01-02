@@ -111,12 +111,10 @@ async def login(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
     return {"access_token": access_token, "token_type": "bearer"}
 
 
-
 @router.get("/users/me", response_model=UserResponse)
 async def get_me(user: User = Depends(get_current_user)):
     """Get current user info."""
     return user
-
 
 
 @router.post("/users", response_model=UserResponse)
@@ -185,7 +183,6 @@ async def delete_user(
     return {"status": "deleted"}
 
 
-
 # --- Config Management ---
 
 @router.get("/config/env")
@@ -214,7 +211,6 @@ async def update_env_config(
     # For now, just write it. User beware.
     with open(".env", "w") as f:
         f.write(config.content)
-        
     return {"status": "updated"}
 
 
@@ -246,7 +242,3 @@ async def update_tensorzero_config(
         f.write(config.content)
         
     return {"status": "updated"}
-
-
-
-

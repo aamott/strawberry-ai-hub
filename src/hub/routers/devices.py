@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import User, get_current_user, create_access_token
+from ..config import settings
 from ..database import get_db, Device
 
 router = APIRouter(prefix="/api/devices", tags=["devices"])
@@ -74,9 +75,8 @@ async def create_device_token(
         expires_delta=None # Long-lived
     )
     
-    # Generate connection command
-    # We default to localhost if not specified, but in prod this should be the real URL
-    hub_url = "http://localhost:8000" 
+    # Generate connection command using configured host/port
+    hub_url = f"http://{settings.host}:{settings.port}" 
     
     # Command supporting the new Spoke loader
     command = f"export STRAWBERRY_HUB_URL={hub_url} STRAWBERRY_DEVICE_TOKEN={access_token} && python -m strawberry.main"

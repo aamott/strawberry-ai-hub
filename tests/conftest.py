@@ -11,7 +11,7 @@ os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{TEST_DB_PATH}"
 
 # Now import hub modules
 from hub import database  # noqa: E402 - ignore import order so we can set test database
-from hub.database import reset_engine  # noqa: E402 - ignore import order
+from hub.database import dispose_engine, reset_engine  # noqa: E402 - ignore import order
 
 
 @pytest.fixture(scope="function")
@@ -24,6 +24,7 @@ async def setup_test_db():
     """Set up and tear down test database for each test."""
     # Remove old test db if exists
     if TEST_DB_PATH.exists():
+        await dispose_engine()
         TEST_DB_PATH.unlink()
     
     # Reset engine to pick up test DATABASE_URL
@@ -35,6 +36,7 @@ async def setup_test_db():
     yield
     
     # Cleanup - reset engine and remove test db
+    await dispose_engine()
     reset_engine()
     if TEST_DB_PATH.exists():
         TEST_DB_PATH.unlink()

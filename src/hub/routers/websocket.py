@@ -171,6 +171,30 @@ class ConnectionManager:
         """
         return list(self._connections.keys())
 
+    async def shutdown(self) -> None:
+        """Gracefully shutdown all connections and cancel pending requests.
+        
+        This should be called during application shutdown to ensure clean exit.
+        """
+        logger.info("Shutting down WebSocket connection manager...")
+        
+        # Cancel all pending futures
+        for request_id, future in list(self._pending_requests.items()):
+            if not future.done():
+                future.cancel()
+        self._pending_requests.clear()
+        
+        # Close all WebSocket connections
+        for device_id, websocket in list(self._connections.items()):
+            try:
+                await websocket.close(code=1001, reason="Server shutdown")
+                logger.debug(f"Closed WebSocket for device {device_id}")
+            except Exception as e:
+                logger.debug(f"Error closing WebSocket for {device_id}: {e}")
+        self._connections.clear()
+        
+        logger.info("WebSocket connection manager shutdown complete")
+
 
 # Global connection manager instance
 connection_manager = ConnectionManager()

@@ -97,7 +97,6 @@ class Message(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     
     # Relationships
-    # Relationships
     session: Mapped["Session"] = relationship(back_populates="messages")
 
 
@@ -154,9 +153,23 @@ async def get_db() -> AsyncSession:
         yield session
 
 
+async def dispose_engine() -> None:
+    """Dispose the global SQLAlchemy engine (if created)."""
+    global _engine, _session_factory
+    if _engine is not None:
+        await _engine.dispose()
+    _engine = None
+    _session_factory = None
+
+
 def reset_engine():
     """Reset engine for testing - allows reconfiguration."""
     global _engine, _session_factory
+    if _engine is not None:
+        try:
+            _engine.sync_engine.dispose()
+        except Exception:
+            pass
     _engine = None
     _session_factory = None
 

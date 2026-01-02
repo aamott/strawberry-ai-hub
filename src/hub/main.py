@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 from .config import settings
-from .database import init_db
+from .database import dispose_engine, init_db
 from .routers import (
     auth_router,
     chat_router,
@@ -19,6 +19,7 @@ from .routers import (
     websocket_router,
     admin_router,
 )
+from .routers.websocket import connection_manager
 
 
 @asynccontextmanager
@@ -32,9 +33,21 @@ async def lifespan(app: FastAPI):
     
     yield
     
-    # Shutdown
+    # Shutdown - close all resources to ensure clean exit
     if "pytest" not in sys.modules:
         print("Shutting down...")
+    
+    # Close WebSocket connections and cancel pending requests
+    try:
+        await connection_manager.shutdown()
+    except Exception:
+        pass
+    
+    # Dispose database engine
+    try:
+        await dispose_engine()
+    except Exception:
+        pass
 
 
 # Create FastAPI app

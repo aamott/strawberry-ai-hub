@@ -12,6 +12,12 @@ Central server for the Strawberry AI platform.
 ## Quick Start
 
 ```bash
+# Create and activate a venv
+python -m venv .venv
+.venv\Scripts\activate # windows
+# Or
+source .venv/bin/activate # linux
+
 # Install dependencies
 pip install -e .
 
@@ -20,6 +26,9 @@ strawberry-hub
 
 # Or with uvicorn directly
 uvicorn hub.main:app --reload
+
+# Or run with a more thread-safe wrapper
+python scripts/dev.py --port 8000
 ```
 
 ## Frontend Setup

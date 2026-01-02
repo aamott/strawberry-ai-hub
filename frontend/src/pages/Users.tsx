@@ -32,7 +32,7 @@ export function UsersPage() {
 
     const loadUsers = async () => {
         try {
-            const res = await api.get("/admin/users");
+            const res = await api.get("/users");
             setUsers(res.data);
         } catch (err) {
             toast({
@@ -50,7 +50,7 @@ export function UsersPage() {
     const handleDelete = async (id: string) => {
         if (!confirm("Are you sure you want to delete this user?")) return;
         try {
-            await api.delete(`/admin/users/${id}`);
+            await api.delete(`/users/${id}`);
             toast({ title: "User deleted" });
             loadUsers();
         } catch (err: any) {
@@ -73,7 +73,7 @@ export function UsersPage() {
         // For now, I'll assume I will add it or have added it.
 
         try {
-            await api.post("/admin/users", newUser); // Needs backend support
+            await api.post("/users", newUser); // Needs backend support
             toast({ title: "User created" });
             setOpen(false);
             setNewUser({ username: "", password: "" });

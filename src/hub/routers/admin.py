@@ -18,7 +18,7 @@ from ..auth import (
     create_access_token,
 )
 
-router = APIRouter(prefix="/api/admin", tags=["admin"])
+router = APIRouter(prefix="/api", tags=["admin"])
 
 
 # --- Models ---
@@ -81,7 +81,7 @@ async def setup_admin(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
     return {"access_token": access_token, "token_type": "bearer"}
 
 
-@router.post("/login", response_model=Token)
+@router.post("/users/login", response_model=Token)
 async def login(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
     """Login and get access token."""
     result = await db.execute(select(User).where(User.username == user_in.username))

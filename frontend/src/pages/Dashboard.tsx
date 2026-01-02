@@ -15,11 +15,11 @@ export function Dashboard() {
     useEffect(() => {
         // Only check if we haven't already
         if (!user) {
-            api.get("/admin/users/me")
+            api.get("/users/me")
                 .then((res) => setUser(res.data))
                 .catch(() => navigate("/login"));
         }
-    }, [navigate]);
+    }, [user, navigate]);
 
     const handleLogout = () => {
         setAuthToken(null);

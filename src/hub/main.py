@@ -1,7 +1,9 @@
 """Main FastAPI application for Strawberry AI Hub."""
 
+import os
 import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -61,15 +63,13 @@ app.include_router(websocket_router)
 app.include_router(admin_router)
 
 
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-import os
-
 # Serve frontend static files
-frontend_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "frontend", "dist")
+frontend_dir = Path(__file__).parent.parent.parent / "frontend" / "dist"
 
-if os.path.exists(frontend_dir):
-    app.mount("/assets", StaticFiles(directory=os.path.join(frontend_dir, "assets")), name="assets")
+if frontend_dir.exists():
+    from fastapi.staticfiles import StaticFiles
+    from fastapi.responses import FileResponse
+    app.mount("/assets", StaticFiles(directory=frontend_dir / "assets"), name="assets")
 
 @app.get("/api/health")
 async def root():

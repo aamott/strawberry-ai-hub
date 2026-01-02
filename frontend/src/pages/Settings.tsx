@@ -15,12 +15,12 @@ export function SettingsPage() {
     const loadConfig = async (type: string) => {
         setLoading(true);
         try {
-            const res = await api.get(`/admin/config/${type}`);
+            const res = await api.get(`/config/${type}`);
             setContent(res.data.content);
         } catch (err) {
             toast({
                 title: "Error",
-                description: "Failed to load configuration",
+                description: "Failed to load config",
                 variant: "destructive",
             });
         } finally {
@@ -31,7 +31,7 @@ export function SettingsPage() {
     const saveConfig = async () => {
         setLoading(true);
         try {
-            await api.post(`/admin/config/${activeTab}`, { content });
+            await api.post(`/config/${activeTab}`, { content });
             toast({
                 title: "Saved",
                 description: "Configuration updated successfully",
@@ -39,7 +39,7 @@ export function SettingsPage() {
         } catch (err) {
             toast({
                 title: "Error",
-                description: "Failed to save configuration",
+                description: "Failed to save config",
                 variant: "destructive",
             });
         } finally {

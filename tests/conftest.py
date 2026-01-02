@@ -10,8 +10,8 @@ TEST_DB_PATH = Path(__file__).parent / "test.db"
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{TEST_DB_PATH}"
 
 # Now import hub modules
-from hub import database
-from hub.database import Base, reset_engine
+from hub import database  # noqa: E402 - ignore import order so we can set test database
+from hub.database import reset_engine  # noqa: E402 - ignore import order
 
 
 @pytest.fixture(scope="function")

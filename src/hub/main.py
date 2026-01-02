@@ -23,7 +23,6 @@ from .routers import (
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     # Startup - skip if in test mode (tables already created)
-    import os
     if "pytest" not in sys.modules:
         print("Initializing database...")
         await init_db()

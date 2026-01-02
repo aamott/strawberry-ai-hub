@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import uuid
-from typing import Dict, Optional, Any
+from typing import Dict, Any
 from datetime import datetime
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException

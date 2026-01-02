@@ -1,9 +1,8 @@
 """Admin API router."""
 
-import os
 import uuid
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -18,7 +17,6 @@ from ..auth import (
     verify_password,
     create_access_token,
 )
-from ..config import settings
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 

@@ -35,10 +35,10 @@ export function Login() {
     };
 
     return (
-        <div className="flex items-center justify-center min-h-screen bg-muted/40 p-4">
+        <div className="flex items-center justify-center min-h-screen bg-muted p-4">
             <Card className="w-full max-w-sm">
                 <CardHeader>
-                    <CardTitle className="text-2xl text-center">Admin Login</CardTitle>
+                    <CardTitle className="text-2xl text-center">Login</CardTitle>
                 </CardHeader>
                 <CardContent>
                     <form onSubmit={handleLogin} className="space-y-4">

@@ -70,6 +70,10 @@ class Session(Base):
     device_id: Mapped[str] = mapped_column(ForeignKey("devices.id"), index=True)
     user_id: Mapped[str] = mapped_column(String(64), index=True)
     
+    # Cached metadata (updated on message insert to avoid N+1 queries)
+    title: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    message_count: Mapped[int] = mapped_column(default=0)
+    
     # Status
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     

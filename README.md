@@ -53,19 +53,23 @@ This will update the `dist` directory with your changes. Make sure to commit the
 
 ## API Endpoints
 
-### Authentication
-- `POST /auth/token` - Get device token
-- `POST /auth/register` - Register new device
+### Devices
+- `GET /api/devices` - List devices for the current user
+- `POST /api/devices/token` - Create a device token for a new device
+
+### Device Auth
+- `GET /auth/me` - Get current device info
+- `POST /auth/refresh` - Refresh device token
 
 ### Chat
-- `POST /v1/chat/completions` - OpenAI-compatible chat endpoint
-- `POST /inference` - TensorZero inference endpoint
+- `POST /api/v1/chat/completions` - OpenAI-compatible chat endpoint
+- `POST /api/inference` - TensorZero inference endpoint
 
 ### Skills
 - `GET /skills` - List registered skills
 - `POST /skills/register` - Register device skills
 - `POST /skills/heartbeat` - Keep skills alive
-- `POST /skills/call` - Execute a skill
+- `POST /skills/execute` - Execute a skill on a remote device
 
 ### Devices
 - `GET /devices` - List connected devices
@@ -77,7 +81,7 @@ This will update the `dist` directory with your changes. Make sure to commit the
    ```bash
    cp .env.example .env
    ```
-   Then edit `.env` with your actual API keys and configuration.
+   Then edit `.env` with your actual API keys and configuration. Update `config/tensorzero.toml` for LLM configuration.
 
 2. **Example Configuration**: Here's what a basic `.env` file looks like:
 

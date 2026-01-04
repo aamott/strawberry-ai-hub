@@ -4,8 +4,16 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Users, Monitor, Activity, Cpu } from "lucide-react";
 
 export function Overview() {
-    const [stats, setStats] = useState({
-        users: 0,
+    const [stats, setStats] = useState<{
+        username: string;
+        isAdmin: boolean;
+        users?: number;
+        devices: number;
+        activeDevices: number;
+    }>({
+        username: "",
+        isAdmin: false,
+        users: undefined,
         devices: 0,
         activeDevices: 0,
     });
@@ -13,16 +21,31 @@ export function Overview() {
     useEffect(() => {
         const fetchData = async () => {
             try {
-                const [usersRes, devicesRes] = await Promise.all([
-                    api.get("/users"),
+                const [meRes, devicesRes] = await Promise.all([
+                    api.get("/users/me"),
                     api.get("/devices"),
                 ]);
 
+                const me = meRes.data;
                 const devices = devicesRes.data;
                 const activeDevices = devices.filter((d: any) => d.is_active).length;
 
+                if (me.is_admin) {
+                    const usersRes = await api.get("/users");
+                    setStats({
+                        username: me.username,
+                        isAdmin: true,
+                        users: usersRes.data.length,
+                        devices: devices.length,
+                        activeDevices,
+                    });
+                    return;
+                }
+
                 setStats({
-                    users: usersRes.data.length,
+                    username: me.username,
+                    isAdmin: false,
+                    users: undefined,
                     devices: devices.length,
                     activeDevices,
                 });
@@ -37,17 +60,32 @@ export function Overview() {
     return (
         <div className="space-y-6">
             <h2 className="text-3xl font-bold tracking-tight">Overview</h2>
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                <Card>
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Total Users</CardTitle>
-                        <Users className="h-4 w-4 text-muted-foreground" />
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl font-bold">{stats.users}</div>
-                        <p className="text-xs text-muted-foreground">Administrators</p>
-                    </CardContent>
-                </Card>
+            <div
+                className={`grid gap-4 md:grid-cols-2 ${stats.isAdmin ? "lg:grid-cols-4" : "lg:grid-cols-3"}`}
+            >
+                {stats.isAdmin ? (
+                    <Card>
+                        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                            <CardTitle className="text-sm font-medium">Total Users</CardTitle>
+                            <Users className="h-4 w-4 text-muted-foreground" />
+                        </CardHeader>
+                        <CardContent>
+                            <div className="text-2xl font-bold">{stats.users ?? 0}</div>
+                            <p className="text-xs text-muted-foreground">Registered accounts</p>
+                        </CardContent>
+                    </Card>
+                ) : (
+                    <Card>
+                        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                            <CardTitle className="text-sm font-medium">Account</CardTitle>
+                            <Users className="h-4 w-4 text-muted-foreground" />
+                        </CardHeader>
+                        <CardContent>
+                            <div className="text-2xl font-bold">{stats.username || "—"}</div>
+                            <p className="text-xs text-muted-foreground">Signed in</p>
+                        </CardContent>
+                    </Card>
+                )}
                 <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                         <CardTitle className="text-sm font-medium">Total Devices</CardTitle>

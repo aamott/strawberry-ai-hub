@@ -1,15 +1,16 @@
 """Skill registry endpoints."""
 
 from datetime import datetime, timedelta
-from typing import List, Optional, Any
+from typing import Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..database import Device, Skill, get_db
 from ..auth import get_current_device
+from ..utils import normalize_device_name
 
 router = APIRouter(prefix="/skills", tags=["skills"])
 
@@ -32,8 +33,8 @@ class SkillExecuteRequest(BaseModel):
     device_name: str
     skill_name: str
     method_name: str
-    args: List[Any] = []
-    kwargs: dict = {}
+    args: List[Any] = Field(default_factory=list)
+    kwargs: dict[str, Any] = Field(default_factory=dict)
 
 
 class SkillResponse(BaseModel):
@@ -126,13 +127,19 @@ async def execute_skill(
     # Import here to avoid circular dependency
     from .websocket import connection_manager
     
-    # Find target device by name (must be same user)
+    # Find target device by normalized name (must be same user)
+    # Get all user devices and match by normalized name
     result = await db.execute(
-        select(Device)
-        .where(Device.name == request.device_name)
-        .where(Device.user_id == device.user_id)
+        select(Device).where(Device.user_id == device.user_id)
     )
-    target_device = result.scalar_one_or_none()
+    user_devices = result.scalars().all()
+    
+    target_device = None
+    request_normalized = normalize_device_name(request.device_name)
+    for d in user_devices:
+        if normalize_device_name(d.name) == request_normalized:
+            target_device = d
+            break
     
     if not target_device:
         raise HTTPException(
@@ -166,11 +173,16 @@ async def execute_skill(
     except TimeoutError as e:
         raise HTTPException(status_code=504, detail=str(e))
     
+    except ValueError as e:
+        # Device not connected (checked by send_skill_request)
+        raise HTTPException(status_code=503, detail=str(e))
+    
+    except RuntimeError as e:
+        # Skill execution error on remote device
+        raise HTTPException(status_code=500, detail=str(e))
+    
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-        }
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
 
 @router.get("", response_model=SkillListResponse)
@@ -220,6 +232,7 @@ async def list_skills(
 @router.get("/search")
 async def search_skills(
     query: str = "",
+    device_limit: int = 10,
     device: Device = Depends(get_current_device),
     db: AsyncSession = Depends(get_db),
 ):
@@ -249,21 +262,62 @@ async def search_skills(
             or (s.docstring and query_lower in s.docstring.lower())
         ]
     
-    # Format results (current device skills first)
+    # Group skills by (class_name, function_name, signature) to avoid duplicates
+    # Each unique skill may exist on multiple devices
+    skill_groups: dict[tuple, dict] = {}
+    
+    for s in skills:
+        key = (s.class_name, s.function_name, s.signature)
+        device_display_name = user_devices[s.device_id].name
+        device_normalized = normalize_device_name(device_display_name)
+        
+        if key not in skill_groups:
+            # Get first line of docstring as summary
+            summary = ""
+            if s.docstring:
+                lines = s.docstring.strip().split("\n")
+                summary = lines[0] if lines else ""
+            
+            skill_groups[key] = {
+                "path": f"{s.class_name}.{s.function_name}",
+                "signature": s.signature,
+                "summary": summary,
+                "docstring": s.docstring or "",
+                "devices": [],  # List of {name, normalized, id}
+                "is_local": False,  # True if available on requesting device
+            }
+        
+        # Add this device to the skill's device list
+        skill_groups[key]["devices"].append({
+            "name": device_display_name,
+            "normalized": device_normalized,
+            "id": s.device_id,
+        })
+        
+        # Mark if this skill is on the local device
+        if s.device_id == device.id:
+            skill_groups[key]["is_local"] = True
+    
+    # Format results: local skills first, then by class name
     results = []
-    for s in sorted(skills, key=lambda x: (x.device_id != device.id, x.class_name)):
-        # Get first line of docstring as summary
-        summary = ""
-        if s.docstring:
-            lines = s.docstring.strip().split("\n")
-            summary = lines[0] if lines else ""
+    max_sample_devices = max(1, min(device_limit, 100))
+    
+    for key, group in sorted(skill_groups.items(), key=lambda x: (not x[1]["is_local"], x[0][0])):
+        # Sort devices: local device first, then alphabetically
+        sorted_devices = sorted(
+            group["devices"],
+            key=lambda d: (d["id"] != device.id, d["normalized"])
+        )
         
         results.append({
-            "path": f"{user_devices[s.device_id].name}.{s.class_name}.{s.function_name}",
-            "signature": s.signature,
-            "summary": summary,
-            "device": user_devices[s.device_id].name,
-            "device_id": s.device_id,
+            "path": group["path"],
+            "signature": group["signature"],
+            "summary": group["summary"],
+            "docstring": group["docstring"],
+            "devices": [d["normalized"] for d in sorted_devices[:max_sample_devices]],
+            "device_names": [d["name"] for d in sorted_devices[:max_sample_devices]],
+            "device_count": len(sorted_devices),
+            "is_local": group["is_local"],
         })
     
     return {"results": results, "total": len(results)}

@@ -1,0 +1,42 @@
+# TensorZero Configuration for Strawberry Hub
+# API keys are stored in .env and referenced via env:: prefix
+
+# -----------------------------------------------------------------------------
+# Gateway Settings (for embedded gateway, most are optional)
+# -----------------------------------------------------------------------------
+[gateway]
+# No bind_address needed for embedded gateway
+# Disable observability for now (no ClickHouse)
+observability.enabled = false
+
+# -----------------------------------------------------------------------------
+# Models: Define LLM backends with fallback routing
+# -----------------------------------------------------------------------------
+
+[models.google_gemini]
+routing = ["google"]
+
+[models.google_gemini.providers.google]
+type = "google_ai_studio_gemini"
+model_name = "gemini-2.0-flash"
+api_key_location = "env::GOOGLE_AI_STUDIO_API_KEY"
+
+# -----------------------------------------------------------------------------
+# Functions: Define inference functions with variants and fallbacks
+# -----------------------------------------------------------------------------
+
+[functions.chat]
+type = "chat"
+description = "Main chat function for Hub - routes to available LLM providers"
+
+# Gemini variant (primary)
+[functions.chat.variants.gemini_variant]
+type = "chat_completion"
+model = "google_gemini"
+retries = { num_retries = 2, max_delay_s = 5 }
+
+# Experimentation config: try Gemini only
+[functions.chat.experimentation]
+type = "uniform"
+candidate_variants = ["gemini_variant"]
+fallback_variants = []

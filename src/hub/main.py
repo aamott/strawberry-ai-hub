@@ -5,17 +5,21 @@ import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 from .config import settings
 from .database import dispose_engine, init_db
+from .tensorzero_gateway import get_gateway, shutdown_gateway
 from .routers import (
     auth_router,
     chat_router,
     skills_router,
     devices_router,
+    device_discovery_router,
+    sessions_router,
     websocket_router,
     admin_router,
 )
@@ -27,8 +31,15 @@ async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     # Startup - skip if in test mode (tables already created)
     if "pytest" not in sys.modules:
+        # Load .env file from project root (ai-hub/.env) before initializing TensorZero.
+        # TensorZero reads credentials from os.environ.
+        project_root = Path(__file__).parent.parent.parent
+        load_dotenv(project_root / ".env", override=False)
+
         print("Initializing database...")
         await init_db()
+        print("Initializing TensorZero gateway...")
+        await get_gateway()
         print("Hub ready!")
     
     yield
@@ -36,6 +47,12 @@ async def lifespan(app: FastAPI):
     # Shutdown - close all resources to ensure clean exit
     if "pytest" not in sys.modules:
         print("Shutting down...")
+    
+    # Shutdown TensorZero gateway
+    try:
+        await shutdown_gateway()
+    except Exception:
+        pass
     
     # Close WebSocket connections and cancel pending requests
     try:
@@ -72,6 +89,8 @@ app.include_router(auth_router)
 app.include_router(chat_router)
 app.include_router(skills_router)
 app.include_router(devices_router)
+app.include_router(device_discovery_router)
+app.include_router(sessions_router)
 app.include_router(websocket_router)
 app.include_router(admin_router)
 

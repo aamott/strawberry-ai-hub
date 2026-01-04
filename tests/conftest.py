@@ -54,16 +54,37 @@ async def client(setup_test_db):
 
 @pytest.fixture
 async def auth_client(client):
-    """Create authenticated test client."""
-    # Register a device first
-    response = await client.post(
-        "/auth/register",
-        json={"name": "Test Device", "user_id": "test_user"},
-    )
-    assert response.status_code == 200, f"Registration failed: {response.text}"
-    data = response.json()
-    token = data["access_token"]
+    """Create authenticated test client with admin user and device."""
+    # Setup admin user if no users exist
+    count_response = await client.get("/api/users/count")
+    if count_response.json() == 0:
+        setup_response = await client.post(
+            "/api/users/setup",
+            json={"username": "admin", "password": "password"},
+        )
+        assert setup_response.status_code == 200, f"Setup failed: {setup_response.text}"
     
-    # Return client with auth header set
-    client.headers["Authorization"] = f"Bearer {token}"
+    # Login with admin credentials
+    login_response = await client.post(
+        "/api/users/login",
+        json={"username": "admin", "password": "password"},
+    )
+    assert login_response.status_code == 200, f"Login failed: {login_response.text}"
+    data = login_response.json()
+    user_token = data["access_token"]
+    
+    # Set user auth header temporarily to create a device
+    client.headers["Authorization"] = f"Bearer {user_token}"
+    
+    # Create a device for the user
+    device_response = await client.post(
+        "/api/devices/token",
+        json={"name": "Test Device"},
+    )
+    assert device_response.status_code == 200, f"Device creation failed: {device_response.text}"
+    device_data = device_response.json()
+    device_token = device_data["token"]
+    
+    # Switch to device auth for the rest of the tests
+    client.headers["Authorization"] = f"Bearer {device_token}"
     yield client

@@ -10,22 +10,24 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import (
-    User,
-    get_db,
     get_current_user,
     get_password_hash,
     verify_password,
     create_access_token,
 )
+from ..database import User, get_db
 
 router = APIRouter(prefix="/api", tags=["admin"])
 
 
 # --- Models ---
 
-class UserCreate(BaseModel):
+class UserCredentials(BaseModel):
     username: str
     password: str
+
+class UserCreate(UserCredentials):
+    is_admin: bool = False
 
 class UserResponse(BaseModel):
     id: str
@@ -52,7 +54,7 @@ async def get_user_count(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/users/setup", response_model=Token)
-async def setup_admin(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
+async def setup_admin(user_in: UserCredentials, db: AsyncSession = Depends(get_db)):
     """Create the first admin user (only if no users exist)."""
     # Check if users exist
     count = await get_user_count(db)
@@ -82,7 +84,7 @@ async def setup_admin(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/users/login", response_model=Token)
-async def login(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
+async def login(user_in: UserCredentials, db: AsyncSession = Depends(get_db)):
     """Login and get access token."""
     result = await db.execute(select(User).where(User.username == user_in.username))
     user = result.scalar_one_or_none()
@@ -139,7 +141,7 @@ async def create_user(
         id=str(uuid.uuid4()),
         username=user_in.username,
         hashed_password=get_password_hash(user_in.password),
-        is_admin=True, # For now, all created users are admins
+        is_admin=user_in.is_admin,
     )
     db.add(user)
     await db.commit()

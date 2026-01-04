@@ -26,6 +26,7 @@ dependencies = [
     
     # LLM
     "openai>=1.0",
+    "tensorzero>=0.1.0",
 ]
 
 [project.optional-dependencies]
@@ -36,9 +37,6 @@ postgres = [
 mqtt = [
     "aiomqtt>=2.0",
 ]
-tensorzero = [
-    "tensorzero>=0.1.0",
-]
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21",
@@ -47,7 +45,7 @@ dev = [
     "ruff>=0.1",
 ]
 all = [
-    "strawberry-hub[postgres,mqtt,tensorzero,dev]",
+    "strawberry-hub[postgres,mqtt,dev]",
 ]
 
 [project.scripts]

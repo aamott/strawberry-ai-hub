@@ -7,9 +7,9 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..auth import User, get_current_user, create_access_token
+from ..auth import get_current_user, create_access_token
 from ..config import settings
-from ..database import get_db, Device
+from ..database import get_db, Device, User
 
 router = APIRouter(prefix="/api/devices", tags=["devices"])
 

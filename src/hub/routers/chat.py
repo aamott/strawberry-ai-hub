@@ -1,15 +1,20 @@
-"""Chat/inference endpoints - OpenAI compatible."""
+"""Chat/inference endpoints - OpenAI compatible.
 
-from typing import List, Optional
+Routes LLM requests through TensorZero embedded gateway with fallback support.
+"""
+
+import time
+import uuid
+from typing import Any, List, Optional
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-import httpx
 
-from ..config import settings
-from ..database import Device
 from ..auth import get_current_device
+from ..database import Device
+from ..tensorzero_gateway import inference as tz_inference
 
-router = APIRouter(tags=["chat"])
+router = APIRouter(prefix="/api", tags=["chat"])
 
 
 class ChatMessage(BaseModel):
@@ -47,135 +52,80 @@ class ChatCompletionResponse(BaseModel):
 async def chat_completions(
     request: ChatCompletionRequest,
     device: Device = Depends(get_current_device),
-):
+) -> ChatCompletionResponse:
     """OpenAI-compatible chat completions endpoint.
     
-    Routes requests to the configured LLM provider.
+    Routes requests through TensorZero embedded gateway with automatic
+    fallback between configured providers (OpenAI -> Gemini).
     """
-    # Determine which API to use
-    if settings.google_ai_studio_api_key:
-        return await _call_google_ai(request)
-    elif settings.openai_api_key:
-        return await _call_openai(request)
-    else:
-        raise HTTPException(
-            status_code=500,
-            detail="No LLM API key configured",
-        )
+    return await _call_tensorzero(request)
 
 
-async def _call_openai(request: ChatCompletionRequest) -> ChatCompletionResponse:
-    """Call OpenAI API."""
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"{settings.openai_base_url}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {settings.openai_api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": request.model or settings.default_model,
-                "messages": [m.model_dump() for m in request.messages],
-                "temperature": request.temperature,
-                "max_tokens": request.max_tokens,
-            },
-            timeout=60.0,
-        )
-        
-        if response.status_code != 200:
-            raise HTTPException(
-                status_code=response.status_code,
-                detail=f"OpenAI API error: {response.text}",
-            )
-        
-        return ChatCompletionResponse(**response.json())
-
-
-async def _call_google_ai(request: ChatCompletionRequest) -> ChatCompletionResponse:
-    """Call Google AI Studio (Gemini) API.
+async def _call_tensorzero(request: ChatCompletionRequest) -> ChatCompletionResponse:
+    """Route request through TensorZero embedded gateway.
     
-    Converts OpenAI format to Gemini format and back.
+    TensorZero handles provider selection and fallback automatically.
     """
-    import time
-    import uuid
+    # Convert messages to TensorZero format
+    messages = [m.model_dump() for m in request.messages]
     
-    # Convert messages to Gemini format
-    gemini_contents = []
-    system_instruction = None
-    
-    for msg in request.messages:
-        if msg.role == "system":
-            system_instruction = msg.content
-        elif msg.role == "user":
-            gemini_contents.append({
-                "role": "user",
-                "parts": [{"text": msg.content}]
-            })
-        elif msg.role == "assistant":
-            gemini_contents.append({
-                "role": "model",
-                "parts": [{"text": msg.content}]
-            })
-    
-    # Build request body
-    body = {
-        "contents": gemini_contents,
-        "generationConfig": {
-            "temperature": request.temperature or 0.7,
-        }
-    }
-    
-    if system_instruction:
-        body["systemInstruction"] = {
-            "parts": [{"text": system_instruction}]
-        }
-    
-    if request.max_tokens:
-        body["generationConfig"]["maxOutputTokens"] = request.max_tokens
-    
-    # Call Gemini API
-    model = "gemini-2.0-flash"  # Default Gemini model
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-    
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            url,
-            params={"key": settings.google_ai_studio_api_key},
-            json=body,
-            timeout=60.0,
-        )
-        
-        if response.status_code != 200:
-            raise HTTPException(
-                status_code=response.status_code,
-                detail=f"Gemini API error: {response.text}",
-            )
-        
-        data = response.json()
-    
-    # Convert response to OpenAI format
     try:
-        candidate = data["candidates"][0]
-        content = candidate["content"]["parts"][0]["text"]
-        finish_reason = candidate.get("finishReason", "stop").lower()
-    except (KeyError, IndexError) as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Unexpected Gemini response format: {e}",
+        response = await tz_inference(
+            messages=messages,
+            function_name="chat",
         )
+    except Exception as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"LLM inference failed: {e}",
+        )
+    
+    # Extract content from TensorZero response
+    content = _extract_content(response)
+    model_used = _extract_model(response)
     
     return ChatCompletionResponse(
         id=f"chatcmpl-{uuid.uuid4().hex[:8]}",
         created=int(time.time()),
-        model=model,
+        model=model_used,
         choices=[
             ChatChoice(
                 index=0,
                 message=ChatMessage(role="assistant", content=content),
-                finish_reason=finish_reason,
+                finish_reason="stop",
             )
         ],
     )
+
+
+def _extract_content(response: Any) -> str:
+    """Extract text content from TensorZero inference response."""
+    # TensorZero returns response with content attribute
+    if hasattr(response, "content"):
+        # Content is a list of ContentBlock objects
+        content_blocks = response.content
+        if content_blocks:
+            # Get text from first block
+            block = content_blocks[0]
+            if hasattr(block, "text"):
+                return block.text
+    
+    # Fallback: try dict access
+    if isinstance(response, dict):
+        content = response.get("content", [])
+        if content and isinstance(content[0], dict):
+            return content[0].get("text", "")
+    
+    return str(response)
+
+
+def _extract_model(response: Any) -> str:
+    """Extract model name from TensorZero inference response."""
+    if hasattr(response, "variant_name"):
+        return response.variant_name
+    if isinstance(response, dict):
+        return response.get("variant_name", "unknown")
+    return "unknown"
 
 
 # Also expose as /inference for TensorZero compatibility
@@ -183,7 +133,7 @@ async def _call_google_ai(request: ChatCompletionRequest) -> ChatCompletionRespo
 async def inference(
     request: ChatCompletionRequest,
     device: Device = Depends(get_current_device),
-):
+) -> ChatCompletionResponse:
     """TensorZero-style inference endpoint."""
     return await chat_completions(request, device)
 

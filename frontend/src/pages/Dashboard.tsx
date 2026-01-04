@@ -80,14 +80,14 @@ export function Dashboard() {
     return (
         <div className="flex min-h-screen bg-background text-foreground flex-col md:flex-row">
             {/* Mobile Header */}
-            <header className="md:hidden border-b p-4 flex items-center gap-4 bg-muted/20">
+            <header className="md:hidden border-b p-4 flex items-center gap-4 bg-muted">
                 <Sheet open={open} onOpenChange={setOpen}>
                     <SheetTrigger asChild>
                         <Button variant="outline" size="icon">
                             <Menu className="h-4 w-4" />
                         </Button>
                     </SheetTrigger>
-                    <SheetContent side="left" className="p-0 w-64 border-r bg-muted/20">
+                    <SheetContent side="left" className="p-0 w-64 border-r bg-muted">
                         <NavContent />
                     </SheetContent>
                 </Sheet>
@@ -95,7 +95,7 @@ export function Dashboard() {
             </header>
 
             {/* Desktop Sidebar */}
-            <aside className="hidden md:block w-64 border-r bg-muted/20 relative">
+            <aside className="hidden md:block w-64 border-r bg-muted relative">
                 <NavContent />
             </aside>
 

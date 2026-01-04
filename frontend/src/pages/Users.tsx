@@ -27,7 +27,11 @@ interface User {
 export function UsersPage() {
     const [users, setUsers] = useState<User[]>([]);
     const [open, setOpen] = useState(false);
-    const [newUser, setNewUser] = useState({ username: "", password: "" });
+    const [newUser, setNewUser] = useState({
+        username: "",
+        password: "",
+        is_admin: false,
+    });
     const { toast } = useToast();
 
     const loadUsers = async () => {
@@ -64,19 +68,12 @@ export function UsersPage() {
 
     const handleCreate = async (e: React.FormEvent) => {
         e.preventDefault();
-        // Currently we don't have a specific endpoint for creating *additional* users in admin.py yet,
-        // only /setup (which fails if users exist).
-        // Wait, the plan said "POST /api/admin/users: Create user (protected)". 
-        // I need to double check if I implemented that. 
-        // Checking admin.py... I only see /users/setup.
-        // I should add POST /users as well.
-        // For now, I'll assume I will add it or have added it.
 
         try {
-            await api.post("/users", newUser); // Needs backend support
+            await api.post("/users", newUser);
             toast({ title: "User created" });
             setOpen(false);
-            setNewUser({ username: "", password: "" });
+            setNewUser({ username: "", password: "", is_admin: false });
             loadUsers();
         } catch (err: any) {
             toast({
@@ -92,7 +89,7 @@ export function UsersPage() {
             <div className="flex items-center justify-between">
                 <div>
                     <h2 className="text-3xl font-bold tracking-tight">Users</h2>
-                    <p className="text-muted-foreground">Manage administrator accounts.</p>
+                    <p className="text-muted-foreground">Manage users and administrators.</p>
                 </div>
                 <Dialog open={open} onOpenChange={setOpen}>
                     <DialogTrigger asChild>
@@ -105,7 +102,7 @@ export function UsersPage() {
                         <DialogHeader>
                             <DialogTitle>Add New User</DialogTitle>
                             <DialogDescription>
-                                Create a new administrator account.
+                                Create a new user. Admin access is optional.
                             </DialogDescription>
                         </DialogHeader>
                         <form onSubmit={handleCreate}>
@@ -128,6 +125,18 @@ export function UsersPage() {
                                         onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
                                         required
                                     />
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <input
+                                        id="is_admin"
+                                        type="checkbox"
+                                        className="h-4 w-4 rounded border border-input bg-background text-primary ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                                        checked={newUser.is_admin}
+                                        onChange={(e) =>
+                                            setNewUser({ ...newUser, is_admin: e.target.checked })
+                                        }
+                                    />
+                                    <Label htmlFor="is_admin">Admin</Label>
                                 </div>
                             </div>
                             <DialogFooter>

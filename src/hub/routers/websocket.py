@@ -155,6 +155,10 @@ class ConnectionManager:
         if not future:
             logger.warning(f"Received response for unknown request {request_id}")
             return
+
+        if future.done():
+            logger.debug(f"Received response for already-completed request {request_id}")
+            return
         
         # Resolve the future
         if response.get("success"):

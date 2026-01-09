@@ -5,7 +5,7 @@ Routes LLM requests through TensorZero embedded gateway with fallback support.
 
 import time
 import uuid
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -19,8 +19,10 @@ router = APIRouter(prefix="/api", tags=["chat"])
 
 class ChatMessage(BaseModel):
     """A single chat message."""
-    role: str  # system, user, assistant
+    role: Literal["system", "user", "assistant", "tool"]
     content: str
+    tool_call_id: Optional[str] = None
+    name: Optional[str] = None
 
 
 class ChatCompletionRequest(BaseModel):
@@ -46,6 +48,7 @@ class ChatCompletionResponse(BaseModel):
     created: int
     model: str
     choices: List[ChatChoice]
+    usage: Optional[Dict[str, Any]] = None
 
 
 @router.post("/v1/chat/completions", response_model=ChatCompletionResponse)
@@ -66,8 +69,33 @@ async def _call_tensorzero(request: ChatCompletionRequest) -> ChatCompletionResp
     
     TensorZero handles provider selection and fallback automatically.
     """
-    # Convert messages to TensorZero format
-    messages = [m.model_dump() for m in request.messages]
+    # Convert messages to TensorZero format.
+    # Hub's embedded TensorZero function input expects message roles to be
+    # compatible with its internal schema (commonly user/assistant). TensorZero
+    # tool-calling flows can introduce roles like `system` and `tool`, so we
+    # normalize those into `user` messages while preserving order.
+    messages: list[dict[str, Any]] = []
+    for m in request.messages:
+        if m.role in ("user", "assistant"):
+            messages.append({"role": m.role, "content": m.content})
+            continue
+
+        if m.role == "system":
+            # Preserve system prompt content but avoid `system` role.
+            messages.append({"role": "user", "content": m.content})
+            continue
+
+        if m.role == "tool":
+            # OpenAI tool-result messages include `tool_call_id` and sometimes `name`.
+            # Preserve the information in-band so the model can continue.
+            prefix_parts = ["[Tool Result]"]
+            if m.name:
+                prefix_parts.append(f"name={m.name}")
+            if m.tool_call_id:
+                prefix_parts.append(f"tool_call_id={m.tool_call_id}")
+            prefix = " ".join(prefix_parts)
+            messages.append({"role": "user", "content": f"{prefix}\n{m.content}"})
+            continue
     
     try:
         response = await tz_inference(
@@ -95,6 +123,7 @@ async def _call_tensorzero(request: ChatCompletionRequest) -> ChatCompletionResp
                 finish_reason="stop",
             )
         ],
+        usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
     )
 
 

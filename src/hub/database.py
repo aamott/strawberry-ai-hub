@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from typing import Optional
+from sqlalchemy import text
 from sqlalchemy import String, DateTime, Text, ForeignKey, Boolean
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
@@ -148,6 +149,28 @@ async def init_db():
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+        # Lightweight schema migration for existing SQLite databases.
+        # The project uses create_all (no Alembic), so we must handle the case
+        # where hub.db was created before new columns were added.
+        try:
+            result = await conn.execute(text("PRAGMA table_info(sessions)"))
+            existing_cols = {row[1] for row in result.fetchall()}
+
+            if "title" not in existing_cols:
+                await conn.execute(text("ALTER TABLE sessions ADD COLUMN title VARCHAR(255)"))
+
+            if "message_count" not in existing_cols:
+                await conn.execute(
+                    text(
+                        "ALTER TABLE sessions "
+                        "ADD COLUMN message_count INTEGER NOT NULL DEFAULT 0"
+                    )
+                )
+        except Exception:
+            # Best-effort: if PRAGMA/ALTER fails (non-SQLite, permissions, etc.),
+            # allow startup to proceed and surface errors during normal operations.
+            pass
 
 
 async def get_db() -> AsyncSession:

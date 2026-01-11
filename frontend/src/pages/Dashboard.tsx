@@ -3,7 +3,7 @@ import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { api, setAuthToken } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { LayoutDashboard, Settings, LogOut, Users, Cpu, Menu } from "lucide-react";
+import { LayoutDashboard, Settings, LogOut, Users, Cpu, Menu, MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function Dashboard() {
@@ -28,6 +28,7 @@ export function Dashboard() {
 
     const navItems = [
         { icon: LayoutDashboard, label: "Overview", href: "/", adminOnly: false },
+        { icon: MessageSquare, label: "Chat", href: "/chat", adminOnly: false },
         { icon: Cpu, label: "My Devices", href: "/devices", adminOnly: false },
         { icon: Users, label: "Users", href: "/users", adminOnly: true },
         { icon: Settings, label: "Settings", href: "/settings", adminOnly: true },
@@ -100,7 +101,10 @@ export function Dashboard() {
             </aside>
 
             {/* Main Content */}
-            <main className="flex-1 p-4 md:p-8 overflow-auto h-[calc(100vh-65px)] md:h-screen">
+            <main className={cn(
+                "flex-1 overflow-auto h-[calc(100vh-65px)] md:h-screen",
+                location.pathname === "/chat" ? "p-0" : "p-4 md:p-8"
+            )}>
                 <Outlet />
             </main>
         </div>

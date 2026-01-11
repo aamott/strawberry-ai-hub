@@ -113,47 +113,100 @@ async def get_current_device(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: AsyncSession = Depends(get_db),
 ) -> Device:
-    """Dependency to get the authenticated device."""
+    """Dependency to get the authenticated device.
+    
+    If the token is a USER token (e.g. from Dashboard), returns a virtual
+    'Dashboard' device linked to that user to allow chat/admin actions.
+    """
     token = credentials.credentials
-    payload = decode_token(token)
+    try:
+        payload = decode_token(token)
+    except HTTPException:
+        raise # Re-raise validation errors
     
-    # Check type
-    if payload.get("type") and payload.get("type") != "device":
-        # Legacy tokens might not have type, but new ones will
-        # If type is present and not device, reject
+    token_type = payload.get("type")
+    
+    # Case 1: Standard Device Token
+    if token_type == "device":
+        device_id = payload.get("sub")
+        if not device_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token payload",
+            )
+        
+        # Get device from database
+        result = await db.execute(select(Device).where(Device.id == device_id))
+        device = result.scalar_one_or_none()
+        
+        if not device:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Device not found",
+            )
+        
+        if not device.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Device is deactivated",
+            )
+        
+        # Update last seen
+        device.last_seen = datetime.utcnow()
+        await db.commit()
+        
+        return device
+
+    # Case 2: User Token (Dashboard/Admin access)
+    elif token_type == "user":
+        user_id = payload.get("sub")
+        
+        # Verify user validity
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        
+        if not user or not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or inactive user",
+            )
+
+        # Find or create specific 'Dashboard' device for this user
+        # We use a deterministic ID so it persists
+        dashboard_device_id = f"dashboard-{user_id}"
+        
+        result = await db.execute(select(Device).where(Device.id == dashboard_device_id))
+        device = result.scalar_one_or_none()
+        
+        if not device:
+            # Create the virtual dashboard device
+            # It needs a hashed_token, but we won't use it for auth (we use User token)
+            # We just need a placeholder that verifies (conceptually)
+            dummy_hash = get_password_hash("internal-dashboard-access")
+            
+            device = Device(
+                id=dashboard_device_id,
+                name="Strawberry Dashboard",
+                user_id=user_id,
+                hashed_token=dummy_hash, 
+                is_active=True,
+                last_seen=datetime.utcnow()
+            )
+            db.add(device)
+            await db.commit()
+        else:
+            # Update last seen
+            device.last_seen = datetime.utcnow()
+            # await db.commit() # Not strictly necessary every time, but keeps last_seen fresh
+            
+        return device
+
+    # Case 3: Invalid Type
+    else:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token type",
+            detail=f"Invalid token type: {token_type}",
         )
-    
-    device_id = payload.get("sub")
-    if not device_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token payload",
-        )
-    
-    # Get device from database
-    result = await db.execute(select(Device).where(Device.id == device_id))
-    device = result.scalar_one_or_none()
-    
-    if not device:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Device not found",
-        )
-    
-    if not device.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Device is deactivated",
-        )
-    
-    # Update last seen
-    device.last_seen = datetime.utcnow()
-    await db.commit()
-    
-    return device
 
 
 async def get_current_user(

@@ -7,6 +7,7 @@ import { SettingsPage } from "@/pages/Settings";
 import { UsersPage } from "@/pages/Users";
 import { DevicesPage } from "@/pages/Devices";
 import { Overview } from "@/pages/Overview";
+import { Chat } from "@/pages/Chat";
 
 function App() {
   return (
@@ -18,6 +19,7 @@ function App() {
 
           <Route path="/" element={<Dashboard />}>
             <Route index element={<Overview />} />
+            <Route path="chat" element={<Chat />} />
             <Route path="users" element={<UsersPage />} />
             <Route path="devices" element={<DevicesPage />} />
             <Route path="settings" element={<SettingsPage />} />

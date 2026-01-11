@@ -278,6 +278,7 @@ async def add_message(
     )
 
 
+
 @router.delete("/{session_id}")
 async def delete_session(
     session_id: str,
@@ -301,3 +302,46 @@ async def delete_session(
     await db.commit()
 
     return {"status": "deleted"}
+
+
+class SessionUpdate(BaseModel):
+    """Request to update a session."""
+    title: Optional[str] = None
+
+
+@router.patch("/{session_id}", response_model=SessionInfo)
+async def update_session(
+    session_id: str,
+    request: SessionUpdate,
+    device: Device = Depends(get_current_device),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update session details (e.g. title)."""
+    # Verify session access
+    result = await db.execute(
+        select(Session).where(
+            Session.id == session_id,
+            Session.user_id == device.user_id,
+        )
+    )
+    session = result.scalar_one_or_none()
+
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    if request.title is not None:
+        session.title = request.title
+
+    await db.commit()
+    await db.refresh(session)
+
+    return SessionInfo(
+        id=session.id,
+        device_id=session.device_id,
+        user_id=session.user_id,
+        title=session.title,
+        is_active=session.is_active,
+        created_at=session.created_at,
+        last_activity=session.last_activity,
+        message_count=session.message_count,
+    )

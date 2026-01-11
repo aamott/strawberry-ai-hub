@@ -172,6 +172,21 @@ export function Chat() {
         }
     };
 
+    const handleRenameSession = async (sessionId: string, newTitle: string) => {
+        try {
+            await api.patch(`/sessions/${sessionId}`, { title: newTitle });
+            setSessions(sessions.map(s =>
+                s.id === sessionId ? { ...s, title: newTitle } : s
+            ));
+        } catch (error) {
+            toast({
+                title: "Error",
+                description: "Failed to rename chat.",
+                variant: "destructive",
+            });
+        }
+    };
+
     return (
         <div className="flex h-full overflow-hidden bg-background">
             {/* Desktop Sidebar */}
@@ -182,6 +197,7 @@ export function Chat() {
                     onSelectSession={setActiveSessionId}
                     onNewChat={handleNewChat}
                     onDeleteSession={handleDeleteSession}
+                    onRenameSession={handleRenameSession}
                 />
             </div>
 
@@ -203,6 +219,7 @@ export function Chat() {
                             }}
                             onNewChat={handleNewChat}
                             onDeleteSession={handleDeleteSession}
+                            onRenameSession={handleRenameSession}
                         />
                     </SheetContent>
                 </Sheet>

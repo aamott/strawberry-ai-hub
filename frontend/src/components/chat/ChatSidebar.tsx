@@ -1,9 +1,10 @@
-import React from "react";
+import { useState } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { MessageSquarePlus, MessageSquare, Trash2 } from "lucide-react";
+import { MessageSquarePlus, MessageSquare, Trash2, Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Input } from "@/components/ui/input";
 
 interface Session {
     id: string;
@@ -18,6 +19,7 @@ interface ChatSidebarProps {
     onSelectSession: (id: string) => void;
     onNewChat: () => void;
     onDeleteSession: (e: React.MouseEvent, id: string) => void;
+    onRenameSession: (id: string, newTitle: string) => void;
 }
 
 export function ChatSidebar({
@@ -25,8 +27,31 @@ export function ChatSidebar({
     activeSessionId,
     onSelectSession,
     onNewChat,
-    onDeleteSession
+    onDeleteSession,
+    onRenameSession
 }: ChatSidebarProps) {
+    const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+    const [editTitle, setEditTitle] = useState("");
+
+    const startEditing = (session: Session) => {
+        setEditingSessionId(session.id);
+        setEditTitle(session.title || "New Chat");
+    };
+
+    const handleRename = async (sessionId: string) => {
+        if (editTitle.trim()) {
+            onRenameSession(sessionId, editTitle.trim());
+        }
+        setEditingSessionId(null);
+    };
+
+    const handleKeyDown = (e: React.KeyboardEvent, sessionId: string) => {
+        if (e.key === "Enter") {
+            handleRename(sessionId);
+        } else if (e.key === "Escape") {
+            setEditingSessionId(null);
+        }
+    };
     return (
         <div className="flex flex-col h-full border-r bg-muted/30 w-full md:w-80">
             <div className="p-4 border-b space-y-4">
@@ -58,25 +83,55 @@ export function ChatSidebar({
                                 onClick={() => onSelectSession(session.id)}
                             >
                                 <MessageSquare className="h-4 w-4 shrink-0 opacity-70" />
-                                <div className="flex-1 overflow-hidden">
-                                    <p className="truncate leading-none mb-1 text-foreground/90">
-                                        {session.title || "New Chat"}
-                                    </p>
-                                    <span className="text-[10px] text-muted-foreground">
-                                        {formatDistanceToNow(new Date(session.last_activity), { addSuffix: true })}
-                                    </span>
-                                </div>
-                                <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive"
-                                    onClick={(e) => {
+
+                                {editingSessionId === session.id ? (
+                                    <Input
+                                        value={editTitle}
+                                        onChange={(e) => setEditTitle(e.target.value)}
+                                        onKeyDown={(e) => handleKeyDown(e, session.id)}
+                                        onBlur={() => handleRename(session.id)}
+                                        autoFocus
+                                        className="h-6 py-0 px-1 text-xs"
+                                        onClick={(e) => e.stopPropagation()}
+                                    />
+                                ) : (
+                                    <div className="flex-1 overflow-hidden" onDoubleClick={(e) => {
                                         e.stopPropagation();
-                                        onDeleteSession(e, session.id);
-                                    }}
-                                >
-                                    <Trash2 className="h-3 w-3" />
-                                </Button>
+                                        startEditing(session);
+                                    }}>
+                                        <p className="truncate leading-none mb-1 text-foreground/90">
+                                            {session.title || "New Chat"}
+                                        </p>
+                                        <span className="text-[10px] text-muted-foreground">
+                                            {formatDistanceToNow(new Date(session.last_activity), { addSuffix: true })}
+                                        </span>
+                                    </div>
+                                )}
+
+                                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-6 w-6 hover:bg-background/50"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            startEditing(session);
+                                        }}
+                                    >
+                                        <Pencil className="h-3 w-3" />
+                                    </Button>
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-6 w-6 hover:bg-destructive/10 hover:text-destructive"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            onDeleteSession(e, session.id);
+                                        }}
+                                    >
+                                        <Trash2 className="h-3 w-3" />
+                                    </Button>
+                                </div>
                             </div>
                         ))
                     )}

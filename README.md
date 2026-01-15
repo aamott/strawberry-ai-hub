@@ -12,16 +12,16 @@ Central server for the Strawberry AI platform.
 ## Quick Start
 
 ```bash
-# Create and activate a venv
+# Create and activate a shared repo venv (from repo root)
 python -m venv .venv
 .venv\Scripts\activate # windows
 # Or
 source .venv/bin/activate # linux
 
 # Install dependencies
-pip install -e .
+pip install -e ai-hub
 
-# Run the server
+# Run the server (from ai-hub/ or repo root)
 strawberry-hub
 
 # Or with uvicorn directly

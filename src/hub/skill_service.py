@@ -497,193 +497,21 @@ class HubSkillService:
             return {"error": f"{type(e).__name__}: {e}"}
     
     async def _execute_python(self, code: str) -> Dict[str, Any]:
-        """Execute Python code with access to devices proxy.
-        
-        This is a simplified executor that handles common patterns:
-        - devices.device_name.SkillClass.method() calls
-        - devices.search_skills() and devices.describe_function()
-        - print() statements
-        
-        For security, this uses pattern matching rather than exec().
+        """Execute Python code with access to devices proxy using asteval.
+
+        This uses asteval.Interpreter for safe execution with support for
+        loops, conditionals, and function calls. Async skill calls are
+        wrapped in sync proxies.
+
+        Args:
+            code: Python code to execute
+
+        Returns:
+            Dict with "result" or "error" key
         """
-        output_lines: List[str] = []
-        
-        try:
-            logger.info(f"[Hub python_exec] Executing code:\n{code}")
-            
-            # Parse and execute skill calls from the code
-            # This is a safe subset of Python execution
-            
-            # Pattern for print statements
-            print_pattern = re.compile(r"print\((.*?)\)", re.DOTALL)
-            
-            # Process line by line
-            lines = code.strip().split("\n")
-            local_vars: Dict[str, Any] = {}
-            
-            for line_num, line in enumerate(lines, 1):
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                
-                logger.debug(f"[Hub python_exec] Processing line {line_num}: {line}")
-                
-                # Handle variable assignment
-                assignment_match = re.match(r"(\w+)\s*=\s*(.+)", line)
-                if assignment_match:
-                    var_name = assignment_match.group(1)
-                    expr = assignment_match.group(2)
-                    logger.debug(f"[Hub python_exec] Assignment: {var_name} = {expr}")
-                    result = await self._eval_expression(
-                        expr, local_vars, output_lines
-                    )
-                    local_vars[var_name] = result
-                    logger.debug(f"[Hub python_exec] Result: {var_name} = {result}")
-                    continue
-                
-                # Handle print statements
-                print_match = print_pattern.search(line)
-                if print_match:
-                    expr = print_match.group(1)
-                    logger.debug(f"[Hub python_exec] Print: {expr}")
-                    result = await self._eval_expression(expr, local_vars, output_lines)
-                    output_lines.append(str(result))
-                    logger.debug(f"[Hub python_exec] Print output: {result}")
-                    continue
-                
-                # Handle standalone expressions
-                logger.debug(f"[Hub python_exec] Evaluating standalone expression: {line}")
-                result = await self._eval_expression(line, local_vars, output_lines)
-                if result is not None:
-                    local_vars["_"] = result
-                    logger.debug(f"[Hub python_exec] Expression result: {result}")
-            
-            output = "\n".join(output_lines) if output_lines else "(no output)"
-            logger.info(f"[Hub python_exec] Final output: {output}")
-            return {"result": output}
-        
-        except Exception as e:
-            logger.error(f"[Hub python_exec] Error: {e}\n{traceback.format_exc()}")
-            return {"error": f"{type(e).__name__}: {e}"}
-    
-    async def _eval_expression(
-        self,
-        expr: str,
-        local_vars: Dict[str, Any],
-        output_lines: List[str],
-    ) -> Any:
-        """Evaluate a single expression safely."""
-        expr = expr.strip()
-        
-        # Handle string literals
-        if (expr.startswith('"') and expr.endswith('"')) or \
-           (expr.startswith("'") and expr.endswith("'")):
-            return expr[1:-1]
-        
-        # Handle numeric literals
-        try:
-            if "." in expr:
-                return float(expr)
-            return int(expr)
-        except ValueError:
-            pass
-        
-        # Handle variable references
-        if expr in local_vars:
-            return local_vars[expr]
-        
-        # Handle search_skills
-        search_match = re.match(
-            r"(?:devices|device_manager)\.search_skills\((.*?)\)$",
-            expr,
-        )
-        if search_match:
-            args_str = search_match.group(1).strip()
-            query = ""
-            device_limit = 10
-            if args_str:
-                # Parse arguments
-                if args_str.startswith('"') or args_str.startswith("'"):
-                    query = args_str.strip("\"'")
-                else:
-                    # Try to parse as keyword args
-                    parts = args_str.split(",")
-                    for part in parts:
-                        if "=" in part:
-                            k, v = part.split("=", 1)
-                            k = k.strip()
-                            v = v.strip().strip("\"'")
-                            if k == "query":
-                                query = v
-                            elif k == "device_limit":
-                                device_limit = int(v)
-                        else:
-                            query = part.strip().strip("\"'")
-            
-            return await self.devices.search_skills(query, device_limit)
-        
-        # Handle describe_function
-        describe_match = re.match(
-            r"(?:devices|device_manager)\.describe_function\((.*?)\)$",
-            expr,
-        )
-        if describe_match:
-            path = describe_match.group(1).strip().strip("\"'")
-            return await self.devices.describe_function(path)
-        
-        # Handle skill calls: devices.device.Skill.method(args)
-        skill_match = re.match(
-            r"(?:devices|device_manager)\.(\w+)\.(\w+)\.(\w+)\((.*?)\)$",
-            expr,
-            re.DOTALL
-        )
-        if skill_match:
-            device_name = skill_match.group(1)
-            skill_name = skill_match.group(2)
-            method_name = skill_match.group(3)
-            args_str = skill_match.group(4).strip()
-            
-            logger.info(f"[Hub python_exec] Skill call: {device_name}.{skill_name}.{method_name}({args_str})")
-            
-            # Parse arguments
-            args = []
-            kwargs = {}
-            if args_str:
-                # Simple argument parsing
-                for part in self._split_args(args_str):
-                    part = part.strip()
-                    if "=" in part and not part.startswith('"'):
-                        k, v = part.split("=", 1)
-                        k = k.strip()
-                        v = self._parse_value(v.strip(), local_vars)
-                        kwargs[k] = v
-                    else:
-                        args.append(self._parse_value(part, local_vars))
-            
-            logger.info(f"[Hub python_exec] Parsed args: {args}, kwargs: {kwargs}")
-            
-            result = await self.devices.execute_skill(
-                device_name=device_name,
-                skill_name=skill_name,
-                method_name=method_name,
-                args=args,
-                kwargs=kwargs,
-            )
-            
-            logger.info(f"[Hub python_exec] Skill result: {result}")
-            return result
-        
-        # Handle f-strings (simplified)
-        if expr.startswith('f"') or expr.startswith("f'"):
-            template = expr[2:-1]
-            # Replace {var} with values
-            result = template
-            for var_name, var_value in local_vars.items():
-                result = result.replace(f"{{{var_name}}}", str(var_value))
-            return result
-        
-        # Unknown expression
-        return None
+        from .asteval_executor import execute_with_asteval
+
+        return await execute_with_asteval(code, self.devices)
     
     def _split_args(self, args_str: str) -> List[str]:
         """Split argument string respecting quotes and parentheses."""

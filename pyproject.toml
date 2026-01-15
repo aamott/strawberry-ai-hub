@@ -27,6 +27,9 @@ dependencies = [
     # LLM
     "openai>=1.0",
     "tensorzero>=0.1.0",
+    
+    # Safe code execution
+    "asteval>=1.0",
 ]
 
 [project.optional-dependencies]

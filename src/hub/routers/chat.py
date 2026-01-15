@@ -85,8 +85,11 @@ async def chat_completions(
     When enable_tools=True, Hub runs the agent loop and executes tools.
     When enable_tools=False (default), Hub just passes through to LLM.
     """
+    logger.info(f"[Chat] Received request: enable_tools={request.enable_tools}, messages={len(request.messages)}")
     if request.enable_tools:
+        logger.info("[Chat] Routing to agent loop (enable_tools=True)")
         return await _run_agent_loop(request, device, db)
+    logger.info("[Chat] Routing to pass-through (enable_tools=False)")
     return await _call_tensorzero(request, use_tools=False)
 
 

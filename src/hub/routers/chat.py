@@ -22,15 +22,13 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import get_current_device
+from ..config import settings
 from ..database import Device, get_db
 from ..tensorzero_gateway import inference as tz_inference
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["chat"])
-
-# Maximum agent loop iterations to prevent infinite loops
-MAX_AGENT_ITERATIONS = 5
 
 
 class ChatMessage(BaseModel):
@@ -144,8 +142,9 @@ async def _run_agent_loop(
     had_iteration_with_no_new_tool_exec = False
     
     # Agent loop
-    for iteration in range(MAX_AGENT_ITERATIONS):
-        logger.info(f"[Hub Agent] Iteration {iteration + 1}/{MAX_AGENT_ITERATIONS}")
+    max_iterations = settings.agent_max_iterations
+    for iteration in range(max_iterations):
+        logger.info(f"[Hub Agent] Iteration {iteration + 1}/{max_iterations}")
         logger.info(f"[Hub Agent] Messages count: {len(messages)}")
         logger.debug(f"[Hub Agent] First message: {messages[0] if messages else 'none'}")
         

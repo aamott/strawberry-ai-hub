@@ -43,6 +43,17 @@ class Settings(BaseSettings):
     # Skill Registry
     skill_expiry_seconds: int = 1800  # 30 minutes without heartbeat
 
+    # Agent loop (online tools)
+    agent_max_iterations: int = Field(
+        default=5,
+        ge=1,
+        le=50,
+        description=(
+            "Maximum number of agent-loop iterations when enable_tools=true. "
+            "Higher values allow multi-step tool use but may increase latency."
+        ),
+    )
+
 
 # Global settings instance
 settings = Settings()

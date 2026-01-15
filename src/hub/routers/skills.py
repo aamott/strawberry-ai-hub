@@ -1,6 +1,6 @@
 """Skill registry endpoints."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -69,7 +69,7 @@ async def register_skills(
     await db.execute(delete(Skill).where(Skill.device_id == device.id))
     
     # Add new skills
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     for skill_info in request.skills:
         skill = Skill(
             device_id=device.id,
@@ -95,7 +95,7 @@ async def heartbeat(
     db: AsyncSession = Depends(get_db),
 ):
     """Update heartbeat for all skills on this device."""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     
     # Update all skills for this device
     result = await db.execute(
@@ -205,7 +205,7 @@ async def list_skills(
     query = select(Skill).where(Skill.device_id.in_(user_devices.keys()))
     
     if not include_expired:
-        expiry_time = datetime.utcnow() - timedelta(seconds=settings.skill_expiry_seconds)
+        expiry_time = datetime.now(timezone.utc) - timedelta(seconds=settings.skill_expiry_seconds)
         query = query.where(Skill.last_heartbeat > expiry_time)
     
     result = await db.execute(query)
@@ -244,7 +244,9 @@ async def search_skills(
     user_devices = {d.id: d for d in result.scalars().all()}
     
     # Get non-expired skills
-    expiry_time = datetime.utcnow() - timedelta(seconds=settings.skill_expiry_seconds)
+    expiry_time = datetime.now(timezone.utc) - timedelta(
+        seconds=settings.skill_expiry_seconds
+    )
     result = await db.execute(
         select(Skill)
         .where(Skill.device_id.in_(user_devices.keys()))

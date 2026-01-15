@@ -1,7 +1,7 @@
 """Session management endpoints for chat history."""
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -81,7 +81,7 @@ async def create_session(
 ):
     """Create a new chat session."""
     session_id = str(uuid.uuid4())[:12]
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     session = Session(
         id=session_id,
@@ -129,7 +129,7 @@ async def list_sessions(
 
     # Apply date filter if requested
     if days is not None:
-        cutoff = datetime.utcnow() - timedelta(days=days)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         query = query.where(Session.last_activity >= cutoff)
 
     # Get sessions ordered by last activity
@@ -250,7 +250,7 @@ async def add_message(
         raise HTTPException(status_code=404, detail="Session not found")
 
     # Create message
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     message = Message(
         session_id=session_id,
         role=request.role,

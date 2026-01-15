@@ -1,7 +1,7 @@
 """Admin API router."""
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -102,7 +102,7 @@ async def login(user_in: UserCredentials, db: AsyncSession = Depends(get_db)):
         )
     
     # Update last login
-    user.last_login = datetime.utcnow()
+    user.last_login = datetime.now(timezone.utc)
     await db.commit()
     
     access_token = create_access_token(

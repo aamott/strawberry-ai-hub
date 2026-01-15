@@ -12,7 +12,7 @@ import json
 import logging
 import re
 import traceback
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select
@@ -108,7 +108,9 @@ class DevicesProxy:
         """Search for skills across all devices."""
         devices = await self._get_user_devices()
         
-        expiry_time = datetime.utcnow() - timedelta(seconds=settings.skill_expiry_seconds)
+        expiry_time = datetime.now(timezone.utc) - timedelta(
+            seconds=settings.skill_expiry_seconds
+        )
         result = await self._db.execute(
             select(Skill)
             .where(Skill.device_id.in_([d.id for d in devices.values()]))
@@ -180,7 +182,9 @@ class DevicesProxy:
         method_name = parts[1]
         
         devices = await self._get_user_devices()
-        expiry_time = datetime.utcnow() - timedelta(seconds=settings.skill_expiry_seconds)
+        expiry_time = datetime.now(timezone.utc) - timedelta(
+            seconds=settings.skill_expiry_seconds
+        )
         
         result = await self._db.execute(
             select(Skill)
@@ -415,7 +419,9 @@ class HubSkillService:
                 # If it's more nested than expected, fall back to last segment
                 method_name = parts[-1]
 
-        expiry_time = datetime.utcnow() - timedelta(seconds=settings.skill_expiry_seconds)
+        expiry_time = datetime.now(timezone.utc) - timedelta(
+            seconds=settings.skill_expiry_seconds
+        )
 
         stmt = (
             select(Skill, Device)

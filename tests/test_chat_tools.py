@@ -343,6 +343,10 @@ async def test_live_llm_tool_search_and_calculator_exec(auth_client):
     - tool search is available
     - python_exec path can lead to a skill call
     """
+    api_key = os.environ.get("GOOGLE_AI_STUDIO_API_KEY")
+    if not api_key or api_key.strip() in {"", "CHANGEME", "YOUR_API_KEY"}:
+        pytest.fail("GOOGLE_AI_STUDIO_API_KEY is required for live LLM tests")
+
     await auth_client.post(
         "/skills/register",
         json={
@@ -389,6 +393,11 @@ async def test_live_llm_tool_search_and_calculator_exec(auth_client):
                 "enable_tools": True,
             },
         )
+
+        if response.status_code == 502:
+            error_text = response.text or ""
+            if "API_KEY_INVALID" in error_text or "API key not valid" in error_text:
+                pytest.fail("Live LLM API key is invalid; update GOOGLE_AI_STUDIO_API_KEY")
 
         assert response.status_code == 200, response.text
         data = response.json()

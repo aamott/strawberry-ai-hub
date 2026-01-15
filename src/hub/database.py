@@ -1,6 +1,6 @@
 """Database setup and models."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy import text
 from sqlalchemy import String, DateTime, Text, ForeignKey, Boolean
@@ -32,7 +32,10 @@ class Device(Base):
     last_seen: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     
     # Timestamps
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+    )
     
     # Relationships
     skills: Mapped[list["Skill"]] = relationship(back_populates="device", cascade="all, delete-orphan")
@@ -53,10 +56,16 @@ class Skill(Base):
     docstring: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     
     # Status
-    last_heartbeat: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_heartbeat: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+    )
     
     # Timestamps
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+    )
     
     # Relationships
     device: Mapped["Device"] = relationship(back_populates="skills")
@@ -84,8 +93,14 @@ class Session(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     
     # Timestamps
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    last_activity: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    last_activity: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+    )
     
     # Relationships
     messages: Mapped[list["Message"]] = relationship(back_populates="session", cascade="all, delete-orphan")
@@ -104,7 +119,10 @@ class Message(Base):
     content: Mapped[str] = mapped_column(Text)
     
     # Timestamps
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+    )
     
     # Relationships
     session: Mapped["Session"] = relationship(back_populates="messages")
@@ -124,7 +142,10 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     
     # Timestamps
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+    )
     last_login: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 

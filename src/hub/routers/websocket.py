@@ -4,7 +4,7 @@ import asyncio
 import logging
 import uuid
 from typing import Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException
 from sqlalchemy import select
@@ -273,7 +273,7 @@ async def websocket_device_endpoint(
     await connection_manager.connect(device.id, websocket)
     
     # Update last_seen
-    device.last_seen = datetime.utcnow()
+    device.last_seen = datetime.now(timezone.utc)
     await db.commit()
     
     try:

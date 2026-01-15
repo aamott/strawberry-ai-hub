@@ -1,6 +1,6 @@
 """Authentication utilities for JWT tokens."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 import secrets
 import hashlib
@@ -70,14 +70,14 @@ def create_access_token(
     if expires_delta is None:
         expires_delta = timedelta(minutes=settings.access_token_expire_minutes)
     
-    expire = datetime.utcnow() + expires_delta
+    expire = datetime.now(timezone.utc) + expires_delta
     
     to_encode = {
         "sub": subject,
         "type": subject_type,
         "name": name,
         "exp": expire,
-        "iat": datetime.utcnow(),
+        "iat": datetime.now(timezone.utc),
     }
     
     if extra_claims:
@@ -152,7 +152,7 @@ async def get_current_device(
             )
         
         # Update last seen
-        device.last_seen = datetime.utcnow()
+        device.last_seen = datetime.now(timezone.utc)
         await db.commit()
         
         return device
@@ -190,13 +190,13 @@ async def get_current_device(
                 user_id=user_id,
                 hashed_token=dummy_hash, 
                 is_active=True,
-                last_seen=datetime.utcnow()
+                last_seen=datetime.now(timezone.utc)
             )
             db.add(device)
             await db.commit()
         else:
             # Update last seen
-            device.last_seen = datetime.utcnow()
+            device.last_seen = datetime.now(timezone.utc)
             # await db.commit() # Not strictly necessary every time, but keeps last_seen fresh
             
         return device

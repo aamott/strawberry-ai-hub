@@ -146,7 +146,8 @@ export function Chat() {
 
             const aiRes = await api.post("/v1/chat/completions", {
                 model: "gpt-4o", // or whatever default
-                messages: history
+                messages: history,
+                enable_tools: true,
             });
 
             const aiContent = aiRes.data.choices[0].message.content;

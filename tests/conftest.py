@@ -1,9 +1,15 @@
-"""Pytest fixtures for Hub tests."""
+"""Pytest configuration and fixtures for Hub tests."""
 
 import os
 import pytest
 from pathlib import Path
 from httpx import AsyncClient, ASGITransport
+
+# Load test environment variables
+test_env = Path(__file__).parent.parent / ".env.test"
+if test_env.exists():
+    from dotenv import load_dotenv
+    load_dotenv(test_env)
 
 # Set test database BEFORE importing any hub modules
 TEST_DB_PATH = Path(__file__).parent / "test.db"

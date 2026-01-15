@@ -1,0 +1,13 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "description": "Get the full function signature and complete docstring for a skill method.",
+  "properties": {
+    "path": {
+      "type": "string",
+      "description": "Path to the function. Format: 'device_name.SkillName.method_name'"
+    }
+  },
+  "required": ["path"],
+  "additionalProperties": false
+}

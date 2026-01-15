@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "description": "Search for available skills by keyword. Returns skills with signatures, summaries, and device lists.",
+  "properties": {
+    "query": {
+      "type": "string",
+      "description": "Search query to match against skill names, signatures, and docstrings. Empty string returns all skills.",
+      "default": ""
+    },
+    "device_limit": {
+      "type": "integer",
+      "description": "Number of sample devices to return per skill. Use this to request more than the default sample.",
+      "default": 10,
+      "minimum": 1,
+      "maximum": 100
+    }
+  },
+  "required": [],
+  "additionalProperties": false
+}

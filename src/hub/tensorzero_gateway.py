@@ -8,7 +8,10 @@ import os
 from pathlib import Path
 from typing import Any, Optional
 
-from tensorzero import AsyncTensorZeroGateway
+try:
+    from tensorzero import AsyncTensorZeroGateway
+except Exception:  # pragma: no cover
+    AsyncTensorZeroGateway = None  # type: ignore[assignment]
 
 # Global gateway instance (lazy initialization)
 _gateway: Optional[AsyncTensorZeroGateway] = None
@@ -43,6 +46,11 @@ async def get_gateway() -> AsyncTensorZeroGateway:
         RuntimeError: If gateway initialization fails.
     """
     global _gateway, _gateway_initialized
+
+    if AsyncTensorZeroGateway is None:
+        raise RuntimeError(
+            "TensorZero is not installed. Install the 'tensorzero' package to enable Hub chat."
+        )
     
     if _gateway is not None and _gateway_initialized:
         return _gateway

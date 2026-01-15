@@ -90,7 +90,11 @@ app.include_router(chat_router)
 app.include_router(skills_router)
 app.include_router(devices_router)
 app.include_router(device_discovery_router)
+# Support both API-prefixed and legacy/non-prefixed session routes.
+# - Frontend uses an axios client rooted at /api, so it calls /api/sessions/...
+# - Tests and some clients call /sessions/...
 app.include_router(sessions_router)
+app.include_router(sessions_router, prefix="/api")
 app.include_router(websocket_router)
 app.include_router(admin_router)
 

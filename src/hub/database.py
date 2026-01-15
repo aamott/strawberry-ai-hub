@@ -75,6 +75,11 @@ class Session(Base):
     title: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     message_count: Mapped[int] = mapped_column(default=0)
     
+    # Mode tracking for tool execution (online/offline)
+    # Tracks which mode prompt was last sent to avoid duplicates when
+    # conversations switch between Hub (online) and Spoke (offline) execution
+    last_mode_prompt: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    
     # Status
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     
@@ -166,6 +171,11 @@ async def init_db():
                         "ALTER TABLE sessions "
                         "ADD COLUMN message_count INTEGER NOT NULL DEFAULT 0"
                     )
+                )
+            
+            if "last_mode_prompt" not in existing_cols:
+                await conn.execute(
+                    text("ALTER TABLE sessions ADD COLUMN last_mode_prompt VARCHAR(32)")
                 )
         except Exception:
             # Best-effort: if PRAGMA/ALTER fails (non-SQLite, permissions, etc.),

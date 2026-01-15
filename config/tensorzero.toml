@@ -22,12 +22,29 @@ model_name = "gemini-2.0-flash"
 api_key_location = "env::GOOGLE_AI_STUDIO_API_KEY"
 
 # -----------------------------------------------------------------------------
+# Tools: Define available tools for the LLM (Hub executes tools when online)
+# -----------------------------------------------------------------------------
+
+[tools.search_skills]
+description = "Search for available skills by keyword. Returns grouped skills with signatures, summaries, and device lists."
+parameters = "tools/search_skills.json"
+
+[tools.describe_function]
+description = "Get full function signature with complete docstring for a skill method."
+parameters = "tools/describe_function.json"
+
+[tools.python_exec]
+description = "Execute Python code in a sandbox. Access skills via 'devices.device_name.SkillName.method()'."
+parameters = "tools/python_exec.json"
+
+# -----------------------------------------------------------------------------
 # Functions: Define inference functions with variants and fallbacks
 # -----------------------------------------------------------------------------
 
 [functions.chat]
 type = "chat"
 description = "Main chat function for Hub - routes to available LLM providers"
+tools = ["search_skills", "describe_function", "python_exec"]
 
 # Gemini variant (primary)
 [functions.chat.variants.gemini_variant]
@@ -37,6 +54,21 @@ retries = { num_retries = 2, max_delay_s = 5 }
 
 # Experimentation config: try Gemini only
 [functions.chat.experimentation]
+type = "uniform"
+candidate_variants = ["gemini_variant"]
+fallback_variants = []
+
+# Chat function without tools (for Spoke pass-through when Spoke handles tools)
+[functions.chat_no_tools]
+type = "chat"
+description = "Chat function without tools - Spoke handles tool execution"
+
+[functions.chat_no_tools.variants.gemini_variant]
+type = "chat_completion"
+model = "google_gemini"
+retries = { num_retries = 2, max_delay_s = 5 }
+
+[functions.chat_no_tools.experimentation]
 type = "uniform"
 candidate_variants = ["gemini_variant"]
 fallback_variants = []

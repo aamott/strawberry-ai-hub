@@ -190,7 +190,6 @@ async def execute_with_asteval(
     Returns:
         Dict with "result" or "error" key
     """
-    import concurrent.futures
 
     # Get the current event loop (we'll pass it to the thread)
     loop = asyncio.get_running_loop()

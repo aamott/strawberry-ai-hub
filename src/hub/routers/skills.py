@@ -15,6 +15,23 @@ from ..utils import normalize_device_name
 router = APIRouter(prefix="/skills", tags=["skills"])
 
 
+async def _get_user_devices(
+    db: AsyncSession,
+    user_id: str,
+) -> dict[str, Device]:
+    """Fetch devices for a user keyed by device ID.
+
+    Args:
+        db: Active database session.
+        user_id: User identifier to scope devices.
+
+    Returns:
+        Mapping of device ID to Device row.
+    """
+    result = await db.execute(select(Device).where(Device.user_id == user_id))
+    return {device.id: device for device in result.scalars().all()}
+
+
 class SkillInfo(BaseModel):
     """Skill information for registration."""
     class_name: str
@@ -129,16 +146,13 @@ async def execute_skill(
     
     # Find target device by normalized name (must be same user)
     # Get all user devices and match by normalized name
-    result = await db.execute(
-        select(Device).where(Device.user_id == device.user_id)
-    )
-    user_devices = result.scalars().all()
+    user_devices = await _get_user_devices(db, device.user_id)
     
     target_device = None
     request_normalized = normalize_device_name(request.device_name)
-    for d in user_devices:
-        if normalize_device_name(d.name) == request_normalized:
-            target_device = d
+    for target in user_devices.values():
+        if normalize_device_name(target.name) == request_normalized:
+            target_device = target
             break
     
     if not target_device:
@@ -196,10 +210,7 @@ async def list_skills(
     Returns skills from all devices owned by the same user.
     """
     # Get all devices for this user
-    result = await db.execute(
-        select(Device).where(Device.user_id == device.user_id)
-    )
-    user_devices = {d.id: d for d in result.scalars().all()}
+    user_devices = await _get_user_devices(db, device.user_id)
     
     # Get skills from those devices
     query = select(Skill).where(Skill.device_id.in_(user_devices.keys()))
@@ -238,10 +249,7 @@ async def search_skills(
 ):
     """Search for skills by name or docstring."""
     # Get all devices for this user
-    result = await db.execute(
-        select(Device).where(Device.user_id == device.user_id)
-    )
-    user_devices = {d.id: d for d in result.scalars().all()}
+    user_devices = await _get_user_devices(db, device.user_id)
     
     # Get non-expired skills
     expiry_time = datetime.now(timezone.utc) - timedelta(

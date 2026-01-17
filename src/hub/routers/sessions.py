@@ -15,6 +15,38 @@ from ..database import Device, Session, Message, get_db
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 
+async def _get_session_for_user(
+    db: AsyncSession,
+    session_id: str,
+    user_id: str,
+) -> Session:
+    """Load a session scoped to the current user.
+
+    Args:
+        db: Active database session.
+        session_id: Identifier for the session.
+        user_id: User identifier for access control.
+
+    Returns:
+        The matching Session row.
+
+    Raises:
+        HTTPException: If the session does not exist for the user.
+    """
+    result = await db.execute(
+        select(Session).where(
+            Session.id == session_id,
+            Session.user_id == user_id,
+        )
+    )
+    session = result.scalar_one_or_none()
+
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    return session
+
+
 # --- Models ---
 
 
@@ -163,16 +195,7 @@ async def get_session(
     db: AsyncSession = Depends(get_db),
 ):
     """Get a specific session."""
-    result = await db.execute(
-        select(Session).where(
-            Session.id == session_id,
-            Session.user_id == device.user_id,
-        )
-    )
-    session = result.scalar_one_or_none()
-
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = await _get_session_for_user(db, session_id, device.user_id)
 
     # Use cached title and message_count
     return SessionInfo(
@@ -195,16 +218,7 @@ async def get_session_messages(
 ):
     """Get all messages for a session."""
     # Verify session access
-    result = await db.execute(
-        select(Session).where(
-            Session.id == session_id,
-            Session.user_id == device.user_id,
-        )
-    )
-    session = result.scalar_one_or_none()
-
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    await _get_session_for_user(db, session_id, device.user_id)
 
     # Get messages
     result = await db.execute(
@@ -238,16 +252,7 @@ async def add_message(
 ):
     """Add a message to a session."""
     # Verify session access
-    result = await db.execute(
-        select(Session).where(
-            Session.id == session_id,
-            Session.user_id == device.user_id,
-        )
-    )
-    session = result.scalar_one_or_none()
-
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = await _get_session_for_user(db, session_id, device.user_id)
 
     # Create message
     now = datetime.now(timezone.utc)
@@ -287,16 +292,7 @@ async def delete_session(
 ):
     """Delete a session and all its messages."""
     # Verify session access
-    result = await db.execute(
-        select(Session).where(
-            Session.id == session_id,
-            Session.user_id == device.user_id,
-        )
-    )
-    session = result.scalar_one_or_none()
-
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = await _get_session_for_user(db, session_id, device.user_id)
 
     await db.delete(session)
     await db.commit()
@@ -318,16 +314,7 @@ async def update_session(
 ):
     """Update session details (e.g. title)."""
     # Verify session access
-    result = await db.execute(
-        select(Session).where(
-            Session.id == session_id,
-            Session.user_id == device.user_id,
-        )
-    )
-    session = result.scalar_one_or_none()
-
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = await _get_session_for_user(db, session_id, device.user_id)
 
     if request.title is not None:
         session.title = request.title

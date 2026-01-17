@@ -10,7 +10,6 @@ The `devices` object routes skill calls to target devices via WebSocket.
 
 import json
 import logging
-import re
 import traceback
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -512,69 +511,6 @@ class HubSkillService:
         from .asteval_executor import execute_with_asteval
 
         return await execute_with_asteval(code, self.devices)
-    
-    def _split_args(self, args_str: str) -> List[str]:
-        """Split argument string respecting quotes and parentheses."""
-        args = []
-        current = ""
-        depth = 0
-        in_string = False
-        string_char = None
-        
-        for char in args_str:
-            if char in ('"', "'") and not in_string:
-                in_string = True
-                string_char = char
-            elif char == string_char and in_string:
-                in_string = False
-                string_char = None
-            elif char == "(" and not in_string:
-                depth += 1
-            elif char == ")" and not in_string:
-                depth -= 1
-            elif char == "," and depth == 0 and not in_string:
-                args.append(current)
-                current = ""
-                continue
-            
-            current += char
-        
-        if current.strip():
-            args.append(current)
-        
-        return args
-    
-    def _parse_value(self, value: str, local_vars: Dict[str, Any]) -> Any:
-        """Parse a value string into a Python value."""
-        value = value.strip()
-        
-        # String literals
-        if (value.startswith('"') and value.endswith('"')) or \
-           (value.startswith("'") and value.endswith("'")):
-            return value[1:-1]
-        
-        # Boolean literals
-        if value.lower() == "true":
-            return True
-        if value.lower() == "false":
-            return False
-        if value.lower() == "none":
-            return None
-        
-        # Numeric literals
-        try:
-            if "." in value:
-                return float(value)
-            return int(value)
-        except ValueError:
-            pass
-        
-        # Variable reference
-        if value in local_vars:
-            return local_vars[value]
-        
-        # Return as string
-        return value
     
     def get_system_prompt(self) -> str:
         """Get the system prompt for online mode."""

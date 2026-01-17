@@ -71,6 +71,45 @@ class ChatCompletionResponse(BaseModel):
     usage: Optional[Dict[str, Any]] = None
 
 
+def _normalize_messages(
+    messages: List[ChatMessage],
+    include_tool_call_id: bool = False,
+) -> list[dict[str, Any]]:
+    """Normalize chat messages for TensorZero input.
+
+    Args:
+        messages: The incoming chat messages in OpenAI-compatible format.
+        include_tool_call_id: Whether to include tool_call_id metadata in tool
+            result prefixes.
+
+    Returns:
+        Normalized message dictionaries compatible with TensorZero input.
+    """
+    normalized: list[dict[str, Any]] = []
+
+    for message in messages:
+        if message.role in ("user", "assistant"):
+            normalized.append({"role": message.role, "content": message.content})
+            continue
+
+        if message.role == "system":
+            # Preserve system prompt content but avoid `system` role.
+            normalized.append({"role": "user", "content": message.content})
+            continue
+
+        if message.role == "tool":
+            # OpenAI tool-result messages include tool_call_id and optionally name.
+            prefix_parts = ["[Tool Result]"]
+            if message.name:
+                prefix_parts.append(f"name={message.name}")
+            if include_tool_call_id and message.tool_call_id:
+                prefix_parts.append(f"tool_call_id={message.tool_call_id}")
+            prefix = " ".join(prefix_parts)
+            normalized.append({"role": "user", "content": f"{prefix}\n{message.content}"})
+
+    return normalized
+
+
 @router.post("/v1/chat/completions", response_model=ChatCompletionResponse)
 async def chat_completions(
     request: ChatCompletionRequest,
@@ -122,17 +161,7 @@ async def _run_agent_loop(
     messages.append({"role": "user", "content": system_prompt})
     
     # Add conversation messages
-    for m in request.messages:
-        if m.role in ("user", "assistant"):
-            messages.append({"role": m.role, "content": m.content})
-        elif m.role == "system":
-            messages.append({"role": "user", "content": m.content})
-        elif m.role == "tool":
-            prefix_parts = ["[Tool Result]"]
-            if m.name:
-                prefix_parts.append(f"name={m.name}")
-            prefix = " ".join(prefix_parts)
-            messages.append({"role": "user", "content": f"{prefix}\n{m.content}"})
+    messages.extend(_normalize_messages(request.messages, include_tool_call_id=False))
     
     final_content = ""
     model_used = "unknown"
@@ -315,28 +344,7 @@ async def _call_tensorzero(
     # compatible with its internal schema (commonly user/assistant). TensorZero
     # tool-calling flows can introduce roles like `system` and `tool`, so we
     # normalize those into `user` messages while preserving order.
-    messages: list[dict[str, Any]] = []
-    for m in request.messages:
-        if m.role in ("user", "assistant"):
-            messages.append({"role": m.role, "content": m.content})
-            continue
-
-        if m.role == "system":
-            # Preserve system prompt content but avoid `system` role.
-            messages.append({"role": "user", "content": m.content})
-            continue
-
-        if m.role == "tool":
-            # OpenAI tool-result messages include `tool_call_id` and sometimes `name`.
-            # Preserve the information in-band so the model can continue.
-            prefix_parts = ["[Tool Result]"]
-            if m.name:
-                prefix_parts.append(f"name={m.name}")
-            if m.tool_call_id:
-                prefix_parts.append(f"tool_call_id={m.tool_call_id}")
-            prefix = " ".join(prefix_parts)
-            messages.append({"role": "user", "content": f"{prefix}\n{m.content}"})
-            continue
+    messages = _normalize_messages(request.messages, include_tool_call_id=True)
     
     # Choose function based on whether tools are enabled
     function_name = "chat" if use_tools else "chat_no_tools"

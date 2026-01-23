@@ -20,6 +20,17 @@ interface Message {
     content: string;
 }
 
+const styles = {
+    container: "flex h-full overflow-hidden bg-background",
+    sidebarDesktop: "hidden md:block h-full",
+    mobileHeader: "md:hidden flex items-center p-3 border-b bg-background/95 backdrop-blur z-10",
+    mobileMenuButton: "mr-2",
+    mobileMenuIcon: "h-5 w-5",
+    mobileTitle: "font-semibold text-lg",
+    sheetContent: "p-0 w-80",
+    mainArea: "flex-1 flex flex-col min-w-0 h-full"
+};
+
 export function Chat() {
     const [sessions, setSessions] = useState<Session[]>([]);
     const [activeSessionId, setActiveSessionId] = useState<string | undefined>();
@@ -189,9 +200,9 @@ export function Chat() {
     };
 
     return (
-        <div className="flex h-full overflow-hidden bg-background">
+        <div className={styles.container}>
             {/* Desktop Sidebar */}
-            <div className="hidden md:block h-full">
+            <div className={styles.sidebarDesktop}>
                 <ChatSidebar
                     sessions={sessions}
                     activeSessionId={activeSessionId}
@@ -202,32 +213,33 @@ export function Chat() {
                 />
             </div>
 
-            {/* Mobile Sheet for Sidebar */}
-            <div className="md:hidden absolute top-4 left-4 z-50">
-                <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
-                    <SheetTrigger asChild>
-                        <Button variant="ghost" size="icon">
-                            <Menu className="h-5 w-5" />
-                        </Button>
-                    </SheetTrigger>
-                    <SheetContent side="left" className="p-0 w-80">
-                        <ChatSidebar
-                            sessions={sessions}
-                            activeSessionId={activeSessionId}
-                            onSelectSession={(id) => {
-                                setActiveSessionId(id);
-                                setSidebarOpen(false);
-                            }}
-                            onNewChat={handleNewChat}
-                            onDeleteSession={handleDeleteSession}
-                            onRenameSession={handleRenameSession}
-                        />
-                    </SheetContent>
-                </Sheet>
-            </div>
-
             {/* Main Chat Area */}
-            <div className="flex-1 flex flex-col min-w-0 h-full">
+            <div className={styles.mainArea}>
+                {/* Mobile Header */}
+                <div className={styles.mobileHeader}>
+                    <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
+                        <SheetTrigger asChild>
+                            <Button variant="ghost" size="icon" className={styles.mobileMenuButton}>
+                                <Menu className={styles.mobileMenuIcon} />
+                            </Button>
+                        </SheetTrigger>
+                        <SheetContent side="left" className={styles.sheetContent}>
+                            <ChatSidebar
+                                sessions={sessions}
+                                activeSessionId={activeSessionId}
+                                onSelectSession={(id) => {
+                                    setActiveSessionId(id);
+                                    setSidebarOpen(false);
+                                }}
+                                onNewChat={handleNewChat}
+                                onDeleteSession={handleDeleteSession}
+                                onRenameSession={handleRenameSession}
+                            />
+                        </SheetContent>
+                    </Sheet>
+                    <span className={styles.mobileTitle}>Strawberry AI</span>
+                </div>
+
                 <ChatArea
                     messages={messages}
                     onSend={handleSendMessage}

@@ -8,6 +8,15 @@ interface ChatInputProps {
     isLoading?: boolean;
 }
 
+const styles = {
+    container: "border-t bg-background/95 backdrop-blur p-3 md:p-4",
+    inputWrapper: "relative flex items-end gap-2 max-w-4xl mx-auto dark:bg-muted/30 p-2 rounded-xl ring-1 ring-border focus-within:ring-ring transition-all",
+    textarea: "min-h-[24px] max-h-[200px] w-full resize-none border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 px-3 py-2",
+    sendButton: "h-8 w-8 mb-1 rounded-lg shrink-0",
+    disclaimerContainer: "text-center mt-2",
+    disclaimerText: "text-[10px] text-muted-foreground"
+};
+
 export function ChatInput({ onSend, isLoading }: ChatInputProps) {
     const [input, setInput] = useState("");
     const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -39,28 +48,28 @@ export function ChatInput({ onSend, isLoading }: ChatInputProps) {
     }, [input]);
 
     return (
-        <div className="border-t bg-background/95 backdrop-blur p-4">
-            <div className="relative flex items-end gap-2 max-w-4xl mx-auto dark:bg-muted/30 p-2 rounded-xl ring-1 ring-border focus-within:ring-ring transition-all">
+        <div className={styles.container}>
+            <div className={styles.inputWrapper}>
                 <Textarea
                     ref={textareaRef}
                     value={input}
                     onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setInput(e.target.value)}
                     onKeyDown={handleKeyDown}
                     placeholder="Message Strawberry AI..."
-                    className="min-h-[24px] max-h-[200px] w-full resize-none border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 px-3 py-2"
+                    className={styles.textarea}
                     rows={1}
                 />
                 <Button
                     size="icon"
                     onClick={handleSend}
                     disabled={!input.trim() || isLoading}
-                    className="h-8 w-8 mb-1 rounded-lg shrink-0"
+                    className={styles.sendButton}
                 >
                     <SendHorizontal className="h-4 w-4" />
                 </Button>
             </div>
-            <div className="text-center mt-2">
-                <p className="text-[10px] text-muted-foreground">AI can make mistakes. Check important info.</p>
+            <div className={styles.disclaimerContainer}>
+                <p className={styles.disclaimerText}>AI can make mistakes. Check important info.</p>
             </div>
         </div>
     );

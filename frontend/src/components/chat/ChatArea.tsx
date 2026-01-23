@@ -13,11 +13,16 @@ interface ChatAreaProps {
     isLoading: boolean;
 }
 
+const styles = {
+    container: "flex flex-col flex-1 min-h-0 bg-background relative",
+    inputWrapper: "px-4 pb-4 max-w-4xl w-full mx-auto"
+};
+
 export function ChatArea({ messages, onSend, isLoading }: ChatAreaProps) {
     return (
-        <div className="flex flex-col h-full bg-background relative">
+        <div className={styles.container}>
             <MessageList messages={messages} isLoading={isLoading} />
-            <div className="px-4 pb-4 max-w-4xl w-full mx-auto">
+            <div className={styles.inputWrapper}>
                 <ChatInput onSend={onSend} isLoading={isLoading} />
             </div>
         </div>

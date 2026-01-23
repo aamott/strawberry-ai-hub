@@ -22,6 +22,27 @@ interface ChatSidebarProps {
     onRenameSession: (id: string, newTitle: string) => void;
 }
 
+const styles = {
+    container: "flex flex-col h-full border-r bg-muted/30 w-full md:w-80",
+    header: "p-4 border-b space-y-4",
+    newChatButton: "w-full justify-start gap-2 h-10 shadow-sm",
+    scrollArea: "flex-1 px-2 py-2",
+    listContainer: "space-y-1",
+    emptyState: "text-center text-muted-foreground text-sm py-8 px-4",
+    sessionItem: (isActive: boolean) => cn(
+        "group flex items-center gap-3 rounded-lg px-3 py-3 text-sm transition-all hover:bg-accent cursor-pointer",
+        isActive ? "bg-accent text-accent-foreground font-medium" : "text-muted-foreground"
+    ),
+    sessionIcon: "h-4 w-4 shrink-0 opacity-70",
+    editInput: "h-6 py-0 px-1 text-xs",
+    sessionInfo: "flex-1 overflow-hidden",
+    sessionTitle: "truncate leading-none mb-1 text-foreground/90",
+    sessionTime: "text-[10px] text-muted-foreground",
+    actionButtons: "flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity",
+    actionButton: "h-6 w-6 hover:bg-background/50",
+    deleteButton: "h-6 w-6 hover:bg-destructive/10 hover:text-destructive"
+};
+
 export function ChatSidebar({
     sessions,
     activeSessionId,
@@ -53,9 +74,9 @@ export function ChatSidebar({
         }
     };
     return (
-        <div className="flex flex-col h-full border-r bg-muted/30 w-full md:w-80">
-            <div className="p-4 border-b space-y-4">
-                <Button onClick={onNewChat} className="w-full justify-start gap-2 h-10 shadow-sm" variant="default">
+        <div className={styles.container}>
+            <div className={styles.header}>
+                <Button onClick={onNewChat} className={styles.newChatButton} variant="default">
                     <MessageSquarePlus className="h-4 w-4" />
                     New Chat
                 </Button>
@@ -65,10 +86,10 @@ export function ChatSidebar({
                 </div> */}
             </div>
 
-            <ScrollArea className="flex-1 px-2 py-2">
-                <div className="space-y-1">
+            <ScrollArea className={styles.scrollArea}>
+                <div className={styles.listContainer}>
                     {sessions.length === 0 ? (
-                        <div className="text-center text-muted-foreground text-sm py-8 px-4">
+                        <div className={styles.emptyState}>
                             No recent chats.
                             <br />Start a new conversation!
                         </div>
@@ -76,13 +97,10 @@ export function ChatSidebar({
                         sessions.map((session) => (
                             <div
                                 key={session.id}
-                                className={cn(
-                                    "group flex items-center gap-3 rounded-lg px-3 py-3 text-sm transition-all hover:bg-accent cursor-pointer",
-                                    activeSessionId === session.id ? "bg-accent text-accent-foreground font-medium" : "text-muted-foreground"
-                                )}
+                                className={styles.sessionItem(activeSessionId === session.id)}
                                 onClick={() => onSelectSession(session.id)}
                             >
-                                <MessageSquare className="h-4 w-4 shrink-0 opacity-70" />
+                                <MessageSquare className={styles.sessionIcon} />
 
                                 {editingSessionId === session.id ? (
                                     <Input
@@ -91,28 +109,28 @@ export function ChatSidebar({
                                         onKeyDown={(e) => handleKeyDown(e, session.id)}
                                         onBlur={() => handleRename(session.id)}
                                         autoFocus
-                                        className="h-6 py-0 px-1 text-xs"
+                                        className={styles.editInput}
                                         onClick={(e) => e.stopPropagation()}
                                     />
                                 ) : (
-                                    <div className="flex-1 overflow-hidden" onDoubleClick={(e) => {
+                                    <div className={styles.sessionInfo} onDoubleClick={(e) => {
                                         e.stopPropagation();
                                         startEditing(session);
                                     }}>
-                                        <p className="truncate leading-none mb-1 text-foreground/90">
+                                        <p className={styles.sessionTitle}>
                                             {session.title || "New Chat"}
                                         </p>
-                                        <span className="text-[10px] text-muted-foreground">
+                                        <span className={styles.sessionTime}>
                                             {formatDistanceToNow(new Date(session.last_activity), { addSuffix: true })}
                                         </span>
                                     </div>
                                 )}
 
-                                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <div className={styles.actionButtons}>
                                     <Button
                                         variant="ghost"
                                         size="icon"
-                                        className="h-6 w-6 hover:bg-background/50"
+                                        className={styles.actionButton}
                                         onClick={(e) => {
                                             e.stopPropagation();
                                             startEditing(session);
@@ -123,7 +141,7 @@ export function ChatSidebar({
                                     <Button
                                         variant="ghost"
                                         size="icon"
-                                        className="h-6 w-6 hover:bg-destructive/10 hover:text-destructive"
+                                        className={styles.deleteButton}
                                         onClick={(e) => {
                                             e.stopPropagation();
                                             onDeleteSession(e, session.id);

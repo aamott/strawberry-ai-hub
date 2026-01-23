@@ -1,8 +1,23 @@
 """Hub configuration using Pydantic Settings."""
 
+from pathlib import Path
 from typing import Optional
+
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
+
+
+HUB_ROOT = Path(__file__).resolve().parents[2]
+
+
+def get_default_database_url() -> str:
+    """Return the default database URL anchored to the hub directory.
+
+    Returns:
+        The sqlite connection URL pointing at the hub.db file in the hub root.
+    """
+    database_path = HUB_ROOT / "hub.db"
+    return f"sqlite+aiosqlite:///{database_path.as_posix()}"
 
 
 class Settings(BaseSettings):
@@ -12,7 +27,7 @@ class Settings(BaseSettings):
     """
     
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(HUB_ROOT / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -30,7 +45,7 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 43200  # 30 days
     
     # Database
-    database_url: str = "sqlite+aiosqlite:///./hub.db"
+    database_url: str = Field(default_factory=get_default_database_url)
     
     # LLM
     openai_api_key: Optional[str] = None
@@ -53,6 +68,25 @@ class Settings(BaseSettings):
             "Higher values allow multi-step tool use but may increase latency."
         ),
     )
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def normalize_database_url(cls, value: str) -> str:
+        """Normalize sqlite URLs to be anchored to the hub directory.
+
+        Args:
+            value: The configured database URL.
+
+        Returns:
+            A database URL with a hub-root-relative sqlite path resolved.
+        """
+        sqlite_prefix = "sqlite+aiosqlite:///"
+        absolute_prefix = "sqlite+aiosqlite:////"
+        if value.startswith(sqlite_prefix) and not value.startswith(absolute_prefix):
+            relative_path = value.split(sqlite_prefix, 1)[1]
+            database_path = (HUB_ROOT / relative_path).resolve()
+            return f"{sqlite_prefix}{database_path.as_posix()}"
+        return value
 
 
 # Global settings instance

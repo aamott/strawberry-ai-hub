@@ -77,7 +77,9 @@ This will update the `dist` directory with your changes. Make sure to commit the
 
 ## Configuration
 
-1. **Environment Setup**: Copy `.env.example` to `.env` and fill in your settings:
+1. **Environment Setup**: Copy `.env.example` to `.env` and fill in your settings. The Hub always
+   loads `.env` and `hub.db` from the `ai-hub/` directory, regardless of the working directory you
+   launch from:
    ```bash
    cp .env.example .env
    ```

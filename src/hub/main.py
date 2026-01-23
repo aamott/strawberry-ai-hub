@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
-from .config import settings
+from .config import HUB_ROOT, settings
 from .database import dispose_engine, init_db
 from .tensorzero_gateway import get_gateway, shutdown_gateway
 from .routers import (
@@ -139,11 +139,13 @@ if os.path.exists(frontend_dir):
 def main():
     """Run the server."""
     print(f"Starting Strawberry AI Hub on {settings.host}:{settings.port}")
+    reload_dirs = [str(HUB_ROOT)] if settings.debug else None
     uvicorn.run(
         "hub.main:app",
         host=settings.host,
         port=settings.port,
         reload=settings.debug,
+        reload_dirs=reload_dirs,
     )
 
 

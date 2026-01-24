@@ -237,7 +237,10 @@ class DevicesProxy:
         
         device = devices.get(normalized)
         if not device:
-            raise ValueError(f"Device '{device_name}' not found")
+            available = ", ".join(sorted(devices.keys()))
+            raise ValueError(
+                f"Device '{device_name}' not found. Available devices: {available or '(none)'}"
+            )
         
         if not self._connection_manager.is_connected(device.id):
             raise ValueError(f"Device '{device_name}' is not currently connected")
@@ -512,6 +515,18 @@ class HubSkillService:
 
         return await execute_with_asteval(code, self.devices)
     
-    def get_system_prompt(self) -> str:
-        """Get the system prompt for online mode."""
-        return ONLINE_MODE_PROMPT
+    async def get_system_prompt(self) -> str:
+        """Get the system prompt for online mode.
+
+        This prompt includes the set of valid `devices.<device>` keys so the model
+        does not invent device names.
+        """
+        devices = await self.devices._get_user_devices()
+        device_keys = ", ".join(sorted(devices.keys()))
+        return (
+            f"{ONLINE_MODE_PROMPT}\n\n"
+            "VALID DEVICE KEYS (use exactly these after 'devices.'):\n"
+            f"{device_keys or '(none)'}\n\n"
+            "IMPORTANT:\n"
+            "- Never invent device names. Always pick a device from search_skills() results or from the list above.\n"
+        )

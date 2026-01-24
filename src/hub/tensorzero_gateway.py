@@ -86,6 +86,7 @@ async def shutdown_gateway() -> None:
 async def inference(
     messages: list[dict[str, str]],
     function_name: str = "chat",
+    system: Optional[str] = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
     """Run inference through the TensorZero gateway.
@@ -93,6 +94,7 @@ async def inference(
     Args:
         messages: List of chat messages in OpenAI format.
         function_name: TensorZero function to call (default: "chat").
+        system: Optional system prompt to include.
         **kwargs: Additional arguments passed to gateway.inference().
         
     Returns:
@@ -100,9 +102,13 @@ async def inference(
     """
     gateway = await get_gateway()
     
+    tz_input: dict[str, Any] = {"messages": messages}
+    if system:
+        tz_input["system"] = system
+    
     response = await gateway.inference(
         function_name=function_name,
-        input={"messages": messages},
+        input=tz_input,
         **kwargs,
     )
     

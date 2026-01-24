@@ -15,9 +15,10 @@ import json
 import logging
 import time
 import uuid
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, AsyncIterator, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -110,12 +111,12 @@ def _normalize_messages(
     return normalized
 
 
-@router.post("/v1/chat/completions", response_model=ChatCompletionResponse)
+@router.post("/v1/chat/completions")
 async def chat_completions(
     request: ChatCompletionRequest,
     device: Device = Depends(get_current_device),
     db: AsyncSession = Depends(get_db),
-) -> ChatCompletionResponse:
+) -> Any:
     """OpenAI-compatible chat completions endpoint.
     
     Routes requests through TensorZero embedded gateway with automatic
@@ -124,12 +125,312 @@ async def chat_completions(
     When enable_tools=True, Hub runs the agent loop and executes tools.
     When enable_tools=False (default), Hub just passes through to LLM.
     """
-    logger.info(f"[Chat] Received request: enable_tools={request.enable_tools}, messages={len(request.messages)}")
+    logger.info(
+        "[Chat] Received request: enable_tools=%s stream=%s messages=%s",
+        request.enable_tools,
+        request.stream,
+        len(request.messages),
+    )
+
+    if request.stream:
+        stream_iter = _stream_chat_completions(request=request, device=device, db=db)
+        return StreamingResponse(stream_iter, media_type="text/event-stream")
+
     if request.enable_tools:
         logger.info("[Chat] Routing to agent loop (enable_tools=True)")
         return await _run_agent_loop(request, device, db)
     logger.info("[Chat] Routing to pass-through (enable_tools=False)")
     return await _call_tensorzero(request, use_tools=False)
+
+
+def _sse(data: dict[str, Any]) -> str:
+    """Format a single Server-Sent Event payload.
+
+    Args:
+        data: JSON-serializable object.
+
+    Returns:
+        SSE-formatted string.
+    """
+    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _get_content_blocks(response: Any) -> list[Any]:
+    """Return TensorZero content blocks from either object or dict responses.
+
+    TensorZero's Python SDK has returned different shapes across versions:
+    - an object with a `.content` attribute containing block objects
+    - a plain dict with a `content` list containing dict blocks
+
+    Args:
+        response: The raw inference response.
+
+    Returns:
+        A list of content blocks (object or dict).
+    """
+    if hasattr(response, "content"):
+        blocks = getattr(response, "content", None) or []
+        if isinstance(blocks, list):
+            return blocks
+        return list(blocks)
+
+    if isinstance(response, dict):
+        blocks = response.get("content") or []
+        return blocks if isinstance(blocks, list) else []
+
+    return []
+
+
+def _extract_text_from_block(block: Any) -> str:
+    """Extract text from a single content block."""
+    if hasattr(block, "text"):
+        text = getattr(block, "text", "")
+        return str(text) if text else ""
+    if isinstance(block, dict) and block.get("type") == "text":
+        text = block.get("text", "")
+        return str(text) if text else ""
+    return ""
+
+
+def _extract_tool_call_from_block(block: Any) -> Optional[dict[str, Any]]:
+    """Extract a tool call dict from a content block, if present."""
+    # Object-style blocks (tests + some SDK versions)
+    if hasattr(block, "type") and getattr(block, "type", None) == "tool_call":
+        name = getattr(block, "name", None) or getattr(block, "raw_name", None)
+        arguments: Any = getattr(block, "arguments", None)
+        if not isinstance(arguments, dict):
+            raw_args = getattr(block, "raw_arguments", None)
+            if raw_args and isinstance(raw_args, str):
+                try:
+                    arguments = json.loads(raw_args)
+                except json.JSONDecodeError:
+                    arguments = {}
+            else:
+                arguments = {}
+        return {
+            "id": str(getattr(block, "id", "") or ""),
+            "name": str(name) if name else "",
+            "arguments": arguments,
+        }
+
+    # Dict-style blocks (observed in some gateway returns)
+    if isinstance(block, dict) and block.get("type") == "tool_call":
+        name = block.get("name") or block.get("raw_name") or ""
+        arguments: Any = block.get("arguments")
+        if not isinstance(arguments, dict):
+            raw_args = block.get("raw_arguments")
+            if raw_args and isinstance(raw_args, str):
+                try:
+                    arguments = json.loads(raw_args)
+                except json.JSONDecodeError:
+                    arguments = {}
+            else:
+                arguments = {}
+        return {
+            "id": str(block.get("id") or ""),
+            "name": str(name),
+            "arguments": arguments,
+        }
+
+    return None
+
+
+async def _stream_chat_completions(
+    request: ChatCompletionRequest,
+    device: Device,
+    db: AsyncSession,
+) -> AsyncIterator[str]:
+    """Stream a chat completion response as SSE events.
+
+    This is *not* token streaming from the model. Instead, it streams:
+    - tool_call_started
+    - tool_call_result
+    - final assistant_message
+
+    Args:
+        request: Chat completion request.
+        device: Authenticated device.
+        db: Database session.
+
+    Yields:
+        SSE data frames.
+    """
+    try:
+        if request.enable_tools:
+            async for event in _agent_loop_events(request=request, device=device, db=db):
+                yield _sse(event)
+        else:
+            # Pass-through: single response.
+            response = await _call_tensorzero(request, use_tools=False)
+            content = response.choices[0].message.content
+            yield _sse({"type": "assistant_message", "content": content})
+        yield _sse({"type": "done"})
+    except HTTPException as e:
+        yield _sse({"type": "error", "error": str(e.detail)})
+    except Exception as e:
+        logger.exception("[Chat Stream] Streaming failed")
+        yield _sse({"type": "error", "error": str(e)})
+
+
+async def _agent_loop_events(
+    request: ChatCompletionRequest,
+    device: Device,
+    db: AsyncSession,
+) -> AsyncIterator[dict[str, Any]]:
+    """Run agent loop and yield structured events.
+
+    This is the shared implementation used by both:
+    - streaming SSE responses
+    - classic JSON responses (non-streaming)
+    """
+    from .websocket import connection_manager
+    from ..skill_service import HubSkillService
+
+    skill_service = HubSkillService(
+        db=db,
+        user_id=device.user_id,
+        connection_manager=connection_manager,
+    )
+
+    messages: List[Dict[str, Any]] = []
+    system_prompt = await skill_service.get_system_prompt()
+    messages.extend(_normalize_messages(request.messages, include_tool_call_id=False))
+
+    tool_result_cache: dict[str, dict[str, Any]] = {}
+    had_iteration_with_no_new_tool_exec = False
+    max_iterations = settings.agent_max_iterations
+
+    final_content = ""
+    model_used = "unknown"
+
+    for iteration in range(max_iterations):
+        _ = iteration
+        response = await tz_inference(
+            messages=messages,
+            function_name="chat",
+            system=system_prompt,
+        )
+
+        content = ""
+        tool_calls: list[dict[str, Any]] = []
+
+        for block in _get_content_blocks(response):
+            content += _extract_text_from_block(block)
+            tc = _extract_tool_call_from_block(block)
+            if tc and tc.get("name"):
+                tool_calls.append(tc)
+
+        model_used = _extract_model(response)
+
+        if not tool_calls:
+            final_content = content
+            break
+
+        # Execute tool calls.
+        tool_results: list[str] = []
+        had_new_tool_exec = False
+
+        for tc in tool_calls:
+            tool_call_id = str(tc.get("id") or "")
+            yield {
+                "type": "tool_call_started",
+                "tool_call_id": tool_call_id,
+                "tool_name": tc.get("name") or "",
+                "arguments": tc.get("arguments") or {},
+            }
+
+            cache_key = f"{tc['name']}:{json.dumps(tc['arguments'] or {}, sort_keys=True, default=str)}"
+            if cache_key in tool_result_cache:
+                result = tool_result_cache[cache_key]
+                cached = True
+            else:
+                result = await skill_service.execute_tool(tc["name"], tc["arguments"])
+                tool_result_cache[cache_key] = result
+                had_new_tool_exec = True
+                cached = False
+
+            success = "result" in result
+            result_str = str(result.get("result", "")) if success else None
+            error_str = str(result.get("error", "")) if not success else None
+
+            if success and (result_str is None or not result_str.strip()):
+                # Many tools (notably python_exec) succeed but produce no stdout.
+                # If we propagate an empty string, models often repeat the same call
+                # indefinitely. Make the empty output explicit.
+                result_str = "(no output)"
+            if (not success) and (error_str is None or not error_str.strip()):
+                error_str = "(unknown error)"
+
+            yield {
+                "type": "tool_call_result",
+                "tool_call_id": tool_call_id,
+                "tool_name": tc.get("name") or "",
+                "success": success,
+                "result": result_str,
+                "error": error_str,
+                "cached": cached,
+            }
+
+            if success:
+                tool_results.append(f"Tool {tc['name']}: {result_str}")
+            else:
+                tool_results.append(f"Tool {tc['name']} error: {error_str}")
+
+        messages.append({"role": "assistant", "content": content})
+        tool_output = "\n".join(tool_results)
+
+        if not had_new_tool_exec:
+            if had_iteration_with_no_new_tool_exec:
+                final_content = (
+                    content
+                    or (
+                        "I executed the tool call(s) above, but the model kept repeating the exact "
+                        "same tool call with identical arguments. I reused the cached result and "
+                        "stopped to avoid an infinite loop.\n\n"
+                        f"Latest cached tool output:\n{tool_output}"
+                    )
+                )
+                break
+            had_iteration_with_no_new_tool_exec = True
+            tool_output = (
+                f"{tool_output}\n\n"
+                "[Note] The tool call(s) above were already executed with identical arguments. "
+                "Do NOT repeat the same tool call again. If you need more information, "
+                "call a different tool or change the arguments. Otherwise, respond now."
+            )
+        else:
+            had_iteration_with_no_new_tool_exec = False
+
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    f"[Tool Results]\n{tool_output}\n\n"
+                    "[Now respond naturally to the user based on these results.]"
+                ),
+            }
+        )
+        final_content = content
+
+    if not (final_content or "").strip():
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "LLM returned an empty response (no content blocks). "
+                f"variant={model_used}"
+            ),
+        )
+
+    yield {
+        "type": "assistant_message",
+        "content": final_content,
+        "model": model_used,
+        "usage": {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        },
+    }
 
 
 async def _run_agent_loop(
@@ -141,177 +442,30 @@ async def _run_agent_loop(
     
     This is used when enable_tools=True (Hub executes tools).
     """
-    from .websocket import connection_manager
-    from ..skill_service import HubSkillService
-    
-    # Create skill service for this user
-    skill_service = HubSkillService(
-        db=db,
-        user_id=device.user_id,
-        connection_manager=connection_manager,
-    )
-    
-    # Build messages for TensorZero
-    messages: List[Dict[str, Any]] = []
-    
-    # Add system prompt for online mode
-    system_prompt = skill_service.get_system_prompt()
-    logger.info(f"[Hub Agent] System prompt length: {len(system_prompt)}")
-    logger.debug(f"[Hub Agent] System prompt preview: {system_prompt[:300]}")
-    messages.append({"role": "user", "content": system_prompt})
-    
-    # Add conversation messages
-    messages.extend(_normalize_messages(request.messages, include_tool_call_id=False))
-    
-    final_content = ""
+    # Consume the shared generator and construct the classic JSON response.
+    final_content: Optional[str] = None
     model_used = "unknown"
+    usage: dict[str, Any] = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
-    # Deduplicate tool calls across iterations within a single request.
-    # Models sometimes "double check" by repeating the same tool call with the
-    # same arguments. We treat identical calls as idempotent and reuse the
-    # cached result instead of executing again.
-    tool_result_cache: dict[str, dict[str, Any]] = {}
-    had_iteration_with_no_new_tool_exec = False
-    
-    # Agent loop
-    max_iterations = settings.agent_max_iterations
-    for iteration in range(max_iterations):
-        logger.info(f"[Hub Agent] Iteration {iteration + 1}/{max_iterations}")
-        logger.info(f"[Hub Agent] Messages count: {len(messages)}")
-        logger.debug(f"[Hub Agent] First message: {messages[0] if messages else 'none'}")
-        
-        try:
-            # Call TensorZero with tools
-            response = await tz_inference(
-                messages=messages,
-                function_name="chat",  # Uses the function with tools defined
-            )
-            logger.info(f"[Hub Agent] Got response with content blocks: {len(response.content) if hasattr(response, 'content') else 0}")
-        except Exception as e:
-            logger.error(f"[Hub Agent] LLM inference failed: {e}")
-            raise HTTPException(
-                status_code=502,
-                detail=f"LLM inference failed: {e}",
-            )
-        
-        # Extract content and tool calls
-        content = ""
-        tool_calls = []
-        
-        if hasattr(response, "content"):
-            logger.info(f"[Hub Agent] Response has {len(response.content)} content blocks")
-            for i, block in enumerate(response.content):
-                logger.info(f"[Hub Agent] Block {i}: type={getattr(block, 'type', 'unknown')}, hasattr text={hasattr(block, 'text')}")
-                if hasattr(block, "text"):
-                    content += block.text
-                elif hasattr(block, "type") and block.type == "tool_call":
-                    name = getattr(block, "name", None) or getattr(block, "raw_name", None)
-                    arguments = getattr(block, "arguments", None)
-                    logger.info(f"[Hub Agent] Tool call found: {name}, args type: {type(arguments)}")
-                    if not isinstance(arguments, dict):
-                        raw_args = getattr(block, "raw_arguments", None)
-                        if raw_args and isinstance(raw_args, str):
-                            try:
-                                arguments = json.loads(raw_args)
-                            except json.JSONDecodeError:
-                                arguments = {}
-                        else:
-                            arguments = {}
-                    
-                    if name:
-                        tool_calls.append({
-                            "id": str(getattr(block, "id", "") or ""),
-                            "name": name,
-                            "arguments": arguments,
-                        })
-                        logger.info(f"[Hub Agent] Added tool call: {name}({arguments})")
-        
-        model_used = getattr(response, "variant_name", "unknown")
-        
-        # If no tool calls, we're done
-        if not tool_calls:
-            final_content = content
-            logger.info(f"[Hub Agent] No tool calls, ending loop. Content: {content[:200] if content else '(empty)'}")
-            break
-        
-        logger.info(f"[Hub Agent] Executing {len(tool_calls)} tool calls: {[tc['name'] for tc in tool_calls]}")
-        
-        # Execute tool calls
-        tool_results = []
-        tool_summaries = []  # Keep summary for final response
-        had_new_tool_exec = False
-        for tc in tool_calls:
-            cache_key = f"{tc['name']}:{json.dumps(tc['arguments'] or {}, sort_keys=True, default=str)}"
+    async for event in _agent_loop_events(request=request, device=device, db=db):
+        if not isinstance(event, dict):
+            continue
+        if str(event.get("type") or "") == "assistant_message":
+            final_content = str(event.get("content") or "")
+            model_used = str(event.get("model") or model_used)
+            incoming_usage = event.get("usage")
+            if isinstance(incoming_usage, dict):
+                usage = incoming_usage
 
-            if cache_key in tool_result_cache:
-                result = tool_result_cache[cache_key]
-                logger.info(
-                    f"[Hub Agent] Reusing cached result for tool: {tc['name']} args: {tc['arguments']}"
-                )
-            else:
-                logger.info(
-                    f"[Hub Agent] Executing tool: {tc['name']} with args: {tc['arguments']}"
-                )
-                result = await skill_service.execute_tool(tc["name"], tc["arguments"])
-                tool_result_cache[cache_key] = result
-                had_new_tool_exec = True
-            logger.info(f"[Hub Agent] Tool result: {result}")
-            
-            if "result" in result:
-                result_str = str(result['result'])
-                tool_results.append(f"Tool {tc['name']}: {result_str}")
-                tool_summaries.append(f"**{tc['name']}({', '.join(f'{k}={v}' for k, v in tc['arguments'].items())})**\n```\n{result_str}\n```")
-            else:
-                error_msg = result.get('error', 'Unknown error')
-                logger.warning(f"[Hub Agent] Tool {tc['name']} failed: {error_msg}")
-                tool_results.append(f"Tool {tc['name']} error: {error_msg}")
-                tool_summaries.append(f"**{tc['name']}** - Error: {error_msg}")
-        
-        # Add assistant response and tool results to messages
-        messages.append({"role": "assistant", "content": content})
-        tool_output = "\n".join(tool_results)
-        logger.info(f"[Hub Agent] Tool output summary: {tool_output[:500]}")
+    if not (final_content or "").strip():
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "LLM returned an empty response (no content blocks). "
+                "This often indicates a provider/auth/config issue."
+            ),
+        )
 
-        if not had_new_tool_exec:
-            # Model repeated identical calls. Strongly steer it to stop looping.
-            if had_iteration_with_no_new_tool_exec:
-                # Second consecutive iteration with no new tool execution:
-                # break early to avoid burning iterations.
-                logger.warning(
-                    "[Hub Agent] No new tool execution for two consecutive iterations; stopping agent loop."
-                )
-                final_content = (
-                    content
-                    or "I already executed the requested tools and got results. See tool log above."
-                )
-                break
-
-            had_iteration_with_no_new_tool_exec = True
-            tool_output = (
-                f"{tool_output}\n\n"
-                "[Note] The tool call(s) above were already executed with identical arguments. "
-                "Do NOT repeat the same tool call again. If you need more information, "
-                "call a different tool or change the arguments. Otherwise, respond now."
-            )
-        else:
-            had_iteration_with_no_new_tool_exec = False
-        messages.append({
-            "role": "user",
-            "content": f"[Tool Results]\n{tool_output}\n\n[Now respond naturally to the user based on these results.]"
-        })
-        
-        # Keep tool summaries for final output
-        if not hasattr(skill_service, '_tool_execution_log'):
-            skill_service._tool_execution_log = []
-        skill_service._tool_execution_log.extend(tool_summaries)
-        
-        final_content = content
-    
-    # If we executed tools, append execution log to the final content so user can see what happened
-    if iteration > 0 and hasattr(skill_service, '_tool_execution_log') and skill_service._tool_execution_log:
-        tool_log = "\n\n".join(skill_service._tool_execution_log)
-        final_content = f"{final_content}\n\n---\n### Tool Execution Log\n\n{tool_log}"
-    
     return ChatCompletionResponse(
         id=f"chatcmpl-{uuid.uuid4().hex[:8]}",
         created=int(time.time()),
@@ -323,7 +477,7 @@ async def _run_agent_loop(
                 finish_reason="stop",
             )
         ],
-        usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        usage=usage,
     )
 
 
@@ -362,6 +516,15 @@ async def _call_tensorzero(
     
     # Extract content from TensorZero response
     content = _extract_content(response)
+    if not (content or "").strip():
+        model_used = _extract_model(response)
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "LLM returned an empty response (no content blocks). "
+                f"variant={model_used}"
+            ),
+        )
     model_used = _extract_model(response)
     
     return ChatCompletionResponse(
@@ -381,23 +544,12 @@ async def _call_tensorzero(
 
 def _extract_content(response: Any) -> str:
     """Extract text content from TensorZero inference response."""
-    # TensorZero returns response with content attribute
-    if hasattr(response, "content"):
-        # Content is a list of ContentBlock objects
-        content_blocks = response.content
-        if content_blocks:
-            # Get text from first block
-            block = content_blocks[0]
-            if hasattr(block, "text"):
-                return block.text
-    
-    # Fallback: try dict access
-    if isinstance(response, dict):
-        content = response.get("content", [])
-        if content and isinstance(content[0], dict):
-            return content[0].get("text", "")
-    
-    return str(response)
+    parts: list[str] = []
+    for block in _get_content_blocks(response):
+        text = _extract_text_from_block(block)
+        if text:
+            parts.append(text)
+    return "".join(parts)
 
 
 def _extract_model(response: Any) -> str:

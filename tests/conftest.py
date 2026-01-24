@@ -1,9 +1,16 @@
 """Pytest configuration and fixtures for Hub tests."""
 
 import os
+import sys
 import pytest
 from pathlib import Path
 from httpx import AsyncClient, ASGITransport
+
+# Ensure the repo root is on sys.path so we can import the top-level `shared`
+# package when tests are executed from the ai-hub project directory.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 # Load test environment variables
 test_env = Path(__file__).parent.parent / ".env.test"

@@ -26,6 +26,7 @@ from ..auth import get_current_device
 from ..config import settings
 from ..database import Device, get_db
 from ..tensorzero_gateway import inference as tz_inference
+from shared.normalization import normalize_device_name
 
 logger = logging.getLogger(__name__)
 
@@ -293,7 +294,9 @@ async def _agent_loop_events(
     )
 
     messages: List[Dict[str, Any]] = []
-    system_prompt = await skill_service.get_system_prompt()
+    system_prompt = await skill_service.get_system_prompt(
+        requesting_device_key=normalize_device_name(device.name or "")
+    )
     messages.extend(_normalize_messages(request.messages, include_tool_call_id=False))
 
     tool_result_cache: dict[str, dict[str, Any]] = {}

@@ -515,14 +515,23 @@ class HubSkillService:
 
         return await execute_with_asteval(code, self.devices)
     
-    async def get_system_prompt(self) -> str:
+    async def get_system_prompt(self, requesting_device_key: str) -> str:
         """Get the system prompt for online mode.
 
         This prompt includes the set of valid `devices.<device>` keys so the model
         does not invent device names.
         """
         devices = await self.devices._get_user_devices()
-        device_keys = ", ".join(sorted(devices.keys()))
+
+        # The hub itself is a control plane and should not be used as a target
+        # device for spoke-originated runs.
+        filtered_device_keys: list[str] = []
+        for key in sorted(devices.keys()):
+            if key == "strawberry_hub" and requesting_device_key != "strawberry_hub":
+                continue
+            filtered_device_keys.append(key)
+
+        device_keys = ", ".join(filtered_device_keys)
         return (
             f"{ONLINE_MODE_PROMPT}\n\n"
             "VALID DEVICE KEYS (use exactly these after 'devices.'):\n"

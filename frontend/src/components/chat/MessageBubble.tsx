@@ -1,7 +1,8 @@
+import type { ComponentProps } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
-import { Copy, Bot, User } from "lucide-react";
+import { Copy, Bot, User, Wrench } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface MessageBubbleProps {
@@ -37,6 +38,7 @@ const styles = {
 
 export function MessageBubble({ role, content }: MessageBubbleProps) {
     const isUser = role === "user";
+    const isTool = role === "tool";
 
     const copyToClipboard = () => {
         navigator.clipboard.writeText(content);
@@ -47,17 +49,33 @@ export function MessageBubble({ role, content }: MessageBubbleProps) {
             <div className={styles.bubbleWrapper(isUser)}>
                 {/* Avatar */}
                 <div className={styles.avatar(isUser)}>
-                    {isUser ? <User className="h-5 w-5" /> : <Bot className="h-5 w-5" />}
+                    {isUser ? (
+                        <User className="h-5 w-5" />
+                    ) : isTool ? (
+                        <Wrench className="h-5 w-5" />
+                    ) : (
+                        <Bot className="h-5 w-5" />
+                    )}
                 </div>
 
                 {/* Message Content */}
-                <div className={styles.messageContent(isUser)}>
+                <div
+                    className={cn(
+                        styles.messageContent(isUser),
+                        isTool && "bg-muted/30 border border-dashed"
+                    )}
+                >
                     {/* Markdown Content */}
                     <div className={styles.prose}>
                         <ReactMarkdown
                             remarkPlugins={[remarkGfm]}
                             components={{
-                                code({ node, inline, className, children, ...props }: any) {
+                                code({
+                                    inline,
+                                    className,
+                                    children,
+                                    ...props
+                                }: ComponentProps<"code"> & { inline?: boolean }) {
                                     return !inline ? (
                                         <div className={styles.codeBlockWrapper}>
                                             <code {...props} className={className}>

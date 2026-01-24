@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Editor from "@monaco-editor/react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -12,12 +12,13 @@ export function SettingsPage() {
     const [loading, setLoading] = useState(false);
     const { toast } = useToast();
 
-    const loadConfig = async (type: string) => {
+    const loadConfig = useCallback(async (type: string) => {
         setLoading(true);
         try {
             const res = await api.get(`/config/${type}`);
             setContent(res.data.content);
         } catch (err) {
+            console.error("Failed to load config", err);
             toast({
                 title: "Error",
                 description: "Failed to load config",
@@ -26,7 +27,7 @@ export function SettingsPage() {
         } finally {
             setLoading(false);
         }
-    };
+    }, [toast]);
 
     const saveConfig = async () => {
         setLoading(true);
@@ -37,6 +38,7 @@ export function SettingsPage() {
                 description: "Configuration updated successfully",
             });
         } catch (err) {
+            console.error("Failed to save config", err);
             toast({
                 title: "Error",
                 description: "Failed to save config",
@@ -48,8 +50,8 @@ export function SettingsPage() {
     };
 
     useEffect(() => {
-        loadConfig(activeTab);
-    }, [activeTab]);
+        void loadConfig(activeTab);
+    }, [activeTab, loadConfig]);
 
     return (
         <div className="space-y-6 flex flex-col h-full">

@@ -1,10 +1,16 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import type { AxiosError } from "axios";
 import { api, setAuthToken } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardHeader, CardContent, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
+
+function getApiErrorDetail(err: unknown): string | undefined {
+    const axiosErr = err as AxiosError<{ detail?: string }>;
+    return axiosErr?.response?.data?.detail;
+}
 
 export function Login() {
     const [username, setUsername] = useState("");
@@ -29,8 +35,9 @@ export function Login() {
             const response = await api.post("/users/login", { username, password });
             setAuthToken(response.data.access_token);
             navigate("/");
-        } catch (err: any) {
-            setError(err.response?.data?.detail || "Login failed");
+        } catch (err: unknown) {
+            console.error("Login failed", err);
+            setError(getApiErrorDetail(err) || "Login failed");
         }
     };
 

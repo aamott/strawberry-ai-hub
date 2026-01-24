@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import type { AxiosError } from "axios";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,6 +31,11 @@ interface NewDeviceResponse {
     command: string;
 }
 
+function getApiErrorDetail(err: unknown): string | undefined {
+    const axiosErr = err as AxiosError<{ detail?: string }>;
+    return axiosErr?.response?.data?.detail;
+}
+
 export function DevicesPage() {
     const [devices, setDevices] = useState<Device[]>([]);
     const [loading, setLoading] = useState(true);
@@ -38,11 +44,12 @@ export function DevicesPage() {
     const [createdDevice, setCreatedDevice] = useState<NewDeviceResponse | null>(null);
     const { toast } = useToast();
 
-    const loadDevices = async () => {
+    const loadDevices = useCallback(async () => {
         try {
             const res = await api.get("/devices");
             setDevices(res.data);
         } catch (err) {
+            console.error("Failed to load devices", err);
             toast({
                 title: "Error",
                 description: "Failed to load devices",
@@ -51,22 +58,23 @@ export function DevicesPage() {
         } finally {
             setLoading(false);
         }
-    };
+    }, [toast]);
 
     useEffect(() => {
-        loadDevices();
-    }, []);
+        void loadDevices();
+    }, [loadDevices]);
 
     const handleDelete = async (id: string) => {
         if (!confirm("Are you sure you want to delete this device?")) return;
         try {
             await api.delete(`/devices/${id}`);
             toast({ title: "Device deleted" });
-            loadDevices();
-        } catch (err: any) {
+            await loadDevices();
+        } catch (err: unknown) {
+            console.error("Failed to delete device", err);
             toast({
                 title: "Error",
-                description: err.response?.data?.detail || "Failed to delete device",
+                description: getApiErrorDetail(err) || "Failed to delete device",
                 variant: "destructive",
             });
         }
@@ -78,11 +86,12 @@ export function DevicesPage() {
             const res = await api.post("/devices/token", { name: newDeviceName });
             setCreatedDevice(res.data);
             toast({ title: "Device created" });
-            loadDevices();
-        } catch (err: any) {
+            await loadDevices();
+        } catch (err: unknown) {
+            console.error("Failed to create device", err);
             toast({
                 title: "Error",
-                description: err.response?.data?.detail || "Failed to create device",
+                description: getApiErrorDetail(err) || "Failed to create device",
                 variant: "destructive",
             });
         }
@@ -93,13 +102,13 @@ export function DevicesPage() {
             navigator.clipboard.writeText(createdDevice.command);
             toast({ title: "Command copied to clipboard" });
         }
-    }
+    };
 
     const handleCloseDialog = () => {
         setOpen(false);
         setCreatedDevice(null);
         setNewDeviceName("");
-    }
+    };
 
     return (
         <div className="space-y-6">

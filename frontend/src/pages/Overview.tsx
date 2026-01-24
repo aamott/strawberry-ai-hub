@@ -3,6 +3,10 @@ import { api } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Users, Monitor, Activity, Cpu } from "lucide-react";
 
+type HubDevice = {
+    is_active: boolean;
+};
+
 export function Overview() {
     const [stats, setStats] = useState<{
         username: string;
@@ -27,8 +31,8 @@ export function Overview() {
                 ]);
 
                 const me = meRes.data;
-                const devices = devicesRes.data;
-                const activeDevices = devices.filter((d: any) => d.is_active).length;
+                const devices = devicesRes.data as HubDevice[];
+                const activeDevices = devices.filter((d) => d.is_active).length;
 
                 if (me.is_admin) {
                     const usersRes = await api.get("/users");

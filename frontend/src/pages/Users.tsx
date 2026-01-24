@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import type { AxiosError } from "axios";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,6 +25,11 @@ interface User {
     last_login?: string;
 }
 
+function getApiErrorDetail(err: unknown): string | undefined {
+    const axiosErr = err as AxiosError<{ detail?: string }>;
+    return axiosErr?.response?.data?.detail;
+}
+
 export function UsersPage() {
     const [users, setUsers] = useState<User[]>([]);
     const [open, setOpen] = useState(false);
@@ -34,33 +40,36 @@ export function UsersPage() {
     });
     const { toast } = useToast();
 
-    const loadUsers = async () => {
+    const loadUsers = useCallback(async () => {
         try {
             const res = await api.get("/users");
             setUsers(res.data);
         } catch (err) {
+            console.error("Failed to load users", err);
             toast({
                 title: "Error",
                 description: "Failed to load users",
                 variant: "destructive",
             });
         }
-    };
+    }, [toast]);
 
     useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         loadUsers();
-    }, []);
+    }, [loadUsers]);
 
     const handleDelete = async (id: string) => {
         if (!confirm("Are you sure you want to delete this user?")) return;
         try {
             await api.delete(`/users/${id}`);
             toast({ title: "User deleted" });
-            loadUsers();
-        } catch (err: any) {
+            await loadUsers();
+        } catch (err: unknown) {
+            console.error("Failed to delete user", err);
             toast({
                 title: "Error",
-                description: err.response?.data?.detail || "Failed to delete user",
+                description: getApiErrorDetail(err) || "Failed to delete user",
                 variant: "destructive",
             });
         }
@@ -74,11 +83,12 @@ export function UsersPage() {
             toast({ title: "User created" });
             setOpen(false);
             setNewUser({ username: "", password: "", is_admin: false });
-            loadUsers();
-        } catch (err: any) {
+            await loadUsers();
+        } catch (err: unknown) {
+            console.error("Failed to create user", err);
             toast({
                 title: "Error",
-                description: err.response?.data?.detail || "Failed to create user",
+                description: getApiErrorDetail(err) || "Failed to create user",
                 variant: "destructive",
             });
         }

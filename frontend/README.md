@@ -1,73 +1,78 @@
-# React + TypeScript + Vite
+# Strawberry Hub Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React + TypeScript + Vite SPA for the **Hub** admin/user UI.
 
-Currently, two official plugins are available:
+## Quick start
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+From this folder:
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Build / lint:
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm run build
+npm run lint
 ```
+
+## Auth model (important)
+
+The frontend stores a JWT in `localStorage` under `admin_token` and sends it as:
+
+```
+Authorization: Bearer <token>
+```
+
+Login/setup endpoints are under `/api/users/*` and return `access_token`.
+
+## API base path
+
+All requests are scoped under `/api` via `src/lib/api.ts`:
+
+- Sessions (chat history): `/api/sessions/*`
+- Chat inference: `/api/v1/chat/completions`
+
+## Chat: sessions vs inference
+
+The UI uses two related systems:
+
+- **Sessions API** stores durable history:
+  - `POST /api/sessions` creates a session
+  - `GET /api/sessions` lists sessions
+  - `GET /api/sessions/{id}/messages` loads history
+  - `POST /api/sessions/{id}/messages` persists messages
+  - `DELETE /api/sessions/{id}` deletes a chat
+
+- **Inference API** runs the model/tool loop:
+  - `POST /api/v1/chat/completions`
+  - The UI requests streaming (`stream: true`) so it can render tool calls/results in order.
+
+## Chat streaming protocol (SSE)
+
+When `stream: true`, the backend returns `text/event-stream` with `data: <json>`.
+Events currently used by the UI:
+
+- `{"type":"tool_call_started","tool_call_id":"...","tool_name":"...","arguments":{...}}`
+- `{"type":"tool_call_result","tool_call_id":"...","tool_name":"...","success":true,"result":"...","cached":false}`
+- `{"type":"assistant_message","content":"...","model":"...","usage":{...}}`
+- `{"type":"error","error":"..."}`
+- `{"type":"done"}`
+
+Frontend helpers:
+
+- `src/lib/sse.ts`: minimal SSE frame parser for `fetch()` streaming responses
+- `src/lib/chatStream.ts`: typed generator that yields stream events
+
+## Deleting chats
+
+- **Single chat**: trash icon per session in the sidebar.
+- **Bulk delete**: click **Select**, choose multiple chats, then click **Delete**.
+
+## Folder layout (high-signal)
+
+- `src/pages/*`: route pages (`/chat` is `Chat.tsx`)
+- `src/components/chat/*`: chat UI primitives (sidebar, list, input, bubbles)
+- `src/lib/*`: API helpers and streaming parsing

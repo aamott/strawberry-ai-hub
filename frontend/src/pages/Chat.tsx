@@ -161,6 +161,31 @@ export function Chat() {
         }
     };
 
+    const handleDeleteSessions = useCallback(async (ids: string[]) => {
+        try {
+            // Delete sequentially to avoid spiking the backend.
+            for (const id of ids) {
+                await api.delete(`/sessions/${id}`);
+            }
+
+            toast({ title: "Chats deleted", description: `Deleted ${ids.length} chat(s).` });
+
+            // Refresh session list and clear active chat if it was deleted.
+            await fetchSessions();
+            if (activeSessionId && ids.includes(activeSessionId)) {
+                setActiveSessionId(undefined);
+                setMessages([]);
+            }
+        } catch (error) {
+            console.error("Failed deleting chats", error);
+            toast({
+                title: "Error",
+                description: "Failed to delete chats.",
+                variant: "destructive",
+            });
+        }
+    }, [activeSessionId, fetchSessions, toast]);
+
     const handleSendMessage = async (content: string) => {
         if (isLoading) return;
         setIsLoading(true);
@@ -324,6 +349,7 @@ export function Chat() {
                     onNewChat={handleNewChat}
                     onDeleteSession={handleDeleteSession}
                     onRenameSession={handleRenameSession}
+                    onDeleteSessions={handleDeleteSessions}
                 />
             </div>
 
@@ -348,6 +374,7 @@ export function Chat() {
                                 onNewChat={handleNewChat}
                                 onDeleteSession={handleDeleteSession}
                                 onRenameSession={handleRenameSession}
+                                onDeleteSessions={handleDeleteSessions}
                             />
                         </SheetContent>
                     </Sheet>

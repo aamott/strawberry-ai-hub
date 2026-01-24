@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { MessageSquarePlus, MessageSquare, Trash2, Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -20,12 +20,15 @@ interface ChatSidebarProps {
     onNewChat: () => void;
     onDeleteSession: (e: React.MouseEvent, id: string) => void;
     onRenameSession: (id: string, newTitle: string) => void;
+    onDeleteSessions: (ids: string[]) => void;
 }
 
 const styles = {
     container: "flex flex-col h-full border-r bg-muted/30 w-full md:w-80",
     header: "p-4 border-b space-y-4",
     newChatButton: "w-full justify-start gap-2 h-10 shadow-sm",
+    bulkActionsRow: "flex items-center gap-2",
+    bulkActionButton: "flex-1 justify-start gap-2 h-9",
     scrollArea: "flex-1 px-2 py-2",
     listContainer: "space-y-1",
     emptyState: "text-center text-muted-foreground text-sm py-8 px-4",
@@ -38,9 +41,11 @@ const styles = {
     sessionInfo: "flex-1 overflow-hidden",
     sessionTitle: "truncate leading-none mb-1 text-foreground/90",
     sessionTime: "text-[10px] text-muted-foreground",
-    actionButtons: "flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity",
+    // On touch devices there's no hover; keep actions visible on small screens.
+    actionButtons: "flex gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
     actionButton: "h-6 w-6 hover:bg-background/50",
-    deleteButton: "h-6 w-6 hover:bg-destructive/10 hover:text-destructive"
+    deleteButton: "h-6 w-6 hover:bg-destructive/10 hover:text-destructive",
+    checkbox: "h-4 w-4 rounded border border-input bg-background text-primary ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
 };
 
 export function ChatSidebar({
@@ -49,10 +54,18 @@ export function ChatSidebar({
     onSelectSession,
     onNewChat,
     onDeleteSession,
-    onRenameSession
+    onRenameSession,
+    onDeleteSessions,
 }: ChatSidebarProps) {
     const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
     const [editTitle, setEditTitle] = useState("");
+    const [selectMode, setSelectMode] = useState(false);
+    const [selected, setSelected] = useState<Record<string, boolean>>({});
+
+    const selectedIds = useMemo(
+        () => Object.entries(selected).filter(([, v]) => v).map(([k]) => k),
+        [selected]
+    );
 
     const startEditing = (session: Session) => {
         setEditingSessionId(session.id);
@@ -73,6 +86,28 @@ export function ChatSidebar({
             setEditingSessionId(null);
         }
     };
+
+    const toggleSelectMode = () => {
+        setSelectMode((prev) => {
+            const next = !prev;
+            if (!next) setSelected({});
+            return next;
+        });
+        setEditingSessionId(null);
+    };
+
+    const toggleSelected = (id: string) => {
+        setSelected((prev) => ({ ...prev, [id]: !prev[id] }));
+    };
+
+    const handleDeleteSelected = () => {
+        if (selectedIds.length === 0) return;
+        if (!confirm(`Delete ${selectedIds.length} chat(s)? This cannot be undone.`)) return;
+        onDeleteSessions(selectedIds);
+        setSelected({});
+        setSelectMode(false);
+    };
+
     return (
         <div className={styles.container}>
             <div className={styles.header}>
@@ -80,6 +115,24 @@ export function ChatSidebar({
                     <MessageSquarePlus className="h-4 w-4" />
                     New Chat
                 </Button>
+                <div className={styles.bulkActionsRow}>
+                    <Button
+                        onClick={toggleSelectMode}
+                        className={styles.bulkActionButton}
+                        variant="outline"
+                    >
+                        {selectMode ? "Done" : "Select"}
+                    </Button>
+                    <Button
+                        onClick={handleDeleteSelected}
+                        className={styles.bulkActionButton}
+                        variant="destructive"
+                        disabled={!selectMode || selectedIds.length === 0}
+                    >
+                        <Trash2 className="h-4 w-4" />
+                        Delete
+                    </Button>
+                </div>
                 {/* <div className="relative">
                     <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                     <Input placeholder="Search chats..." className="pl-9 h-9 bg-background" />
@@ -98,8 +151,23 @@ export function ChatSidebar({
                             <div
                                 key={session.id}
                                 className={styles.sessionItem(activeSessionId === session.id)}
-                                onClick={() => onSelectSession(session.id)}
+                                onClick={() => {
+                                    if (selectMode) {
+                                        toggleSelected(session.id);
+                                        return;
+                                    }
+                                    onSelectSession(session.id);
+                                }}
                             >
+                                {selectMode ? (
+                                    <input
+                                        type="checkbox"
+                                        className={styles.checkbox}
+                                        checked={Boolean(selected[session.id])}
+                                        onChange={() => toggleSelected(session.id)}
+                                        onClick={(e) => e.stopPropagation()}
+                                    />
+                                ) : null}
                                 <MessageSquare className={styles.sessionIcon} />
 
                                 {editingSessionId === session.id ? (
@@ -126,7 +194,7 @@ export function ChatSidebar({
                                     </div>
                                 )}
 
-                                <div className={styles.actionButtons}>
+                                <div className={cn(styles.actionButtons, selectMode && "hidden")}>
                                     <Button
                                         variant="ghost"
                                         size="icon"

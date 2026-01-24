@@ -26,7 +26,7 @@ from ..auth import get_current_device
 from ..config import settings
 from ..database import Device, get_db
 from ..tensorzero_gateway import inference as tz_inference
-from shared.normalization import normalize_device_name
+from ..utils import normalize_device_name
 
 logger = logging.getLogger(__name__)
 

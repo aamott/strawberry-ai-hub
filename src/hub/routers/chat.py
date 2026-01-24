@@ -298,13 +298,13 @@ async def _agent_loop_events(
         requesting_device_key=normalize_device_name(device.name or "")
     )
     messages.extend(_normalize_messages(request.messages, include_tool_call_id=False))
-
-    tool_result_cache: dict[str, dict[str, Any]] = {}
-    had_iteration_with_no_new_tool_exec = False
     max_iterations = settings.agent_max_iterations
 
     final_content = ""
     model_used = "unknown"
+    had_any_tool_execution = False
+    did_empty_text_retry = False
+    repeated_across_iterations: dict[str, int] = {}
 
     for iteration in range(max_iterations):
         _ = iteration
@@ -317,7 +317,17 @@ async def _agent_loop_events(
         content = ""
         tool_calls: list[dict[str, Any]] = []
 
-        for block in _get_content_blocks(response):
+        blocks = _get_content_blocks(response)
+        block_types: list[str] = []
+        for block in blocks:
+            if hasattr(block, "type"):
+                block_types.append(str(getattr(block, "type") or "unknown"))
+            elif isinstance(block, dict):
+                block_types.append(str(block.get("type") or "unknown"))
+            else:
+                block_types.append(type(block).__name__)
+
+        for block in blocks:
             content += _extract_text_from_block(block)
             tc = _extract_tool_call_from_block(block)
             if tc and tc.get("name"):
@@ -325,13 +335,36 @@ async def _agent_loop_events(
 
         model_used = _extract_model(response)
 
+        if not content.strip() and not tool_calls:
+            logger.warning(
+                "[Agent Loop] Empty model step. variant=%s iteration=%s blocks=%s",
+                model_used,
+                iteration,
+                block_types,
+            )
+
         if not tool_calls:
+            if had_any_tool_execution and not content.strip() and not did_empty_text_retry:
+                # Some providers occasionally return no text content blocks after tool results.
+                # Nudge once to request a natural-language response.
+                did_empty_text_retry = True
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "[System Note] The previous response contained no text. "
+                            "Do NOT call tools again. Respond now in natural language using the tool results above."
+                        ),
+                    }
+                )
+                continue
+
             final_content = content
             break
 
         # Execute tool calls.
         tool_results: list[str] = []
-        had_new_tool_exec = False
+        seen_execution_keys: set[str] = set()
 
         for tc in tool_calls:
             tool_call_id = str(tc.get("id") or "")
@@ -342,15 +375,29 @@ async def _agent_loop_events(
                 "arguments": tc.get("arguments") or {},
             }
 
-            cache_key = f"{tc['name']}:{json.dumps(tc['arguments'] or {}, sort_keys=True, default=str)}"
-            if cache_key in tool_result_cache:
-                result = tool_result_cache[cache_key]
-                cached = True
+            execution_key = f"{tc['name']}:{json.dumps(tc['arguments'] or {}, sort_keys=True, default=str)}"
+            if execution_key in seen_execution_keys:
+                logger.warning(
+                    "[Agent Loop] Duplicate tool call in single response; skipping. tool=%s args=%s",
+                    tc.get("name"),
+                    tc.get("arguments"),
+                )
+                result = {"result": "(duplicate tool call skipped)"}
             else:
+                seen_execution_keys.add(execution_key)
+                repeated_across_iterations[execution_key] = (
+                    repeated_across_iterations.get(execution_key, 0) + 1
+                )
+                if repeated_across_iterations[execution_key] > 1:
+                    logger.warning(
+                        "[Agent Loop] Tool call repeated across iterations. iteration=%s count=%s tool=%s args=%s",
+                        iteration,
+                        repeated_across_iterations[execution_key],
+                        tc.get("name"),
+                        tc.get("arguments"),
+                    )
                 result = await skill_service.execute_tool(tc["name"], tc["arguments"])
-                tool_result_cache[cache_key] = result
-                had_new_tool_exec = True
-                cached = False
+                had_any_tool_execution = True
 
             success = "result" in result
             result_str = str(result.get("result", "")) if success else None
@@ -371,7 +418,6 @@ async def _agent_loop_events(
                 "success": success,
                 "result": result_str,
                 "error": error_str,
-                "cached": cached,
             }
 
             if success:
@@ -381,28 +427,6 @@ async def _agent_loop_events(
 
         messages.append({"role": "assistant", "content": content})
         tool_output = "\n".join(tool_results)
-
-        if not had_new_tool_exec:
-            if had_iteration_with_no_new_tool_exec:
-                final_content = (
-                    content
-                    or (
-                        "I executed the tool call(s) above, but the model kept repeating the exact "
-                        "same tool call with identical arguments. I reused the cached result and "
-                        "stopped to avoid an infinite loop.\n\n"
-                        f"Latest cached tool output:\n{tool_output}"
-                    )
-                )
-                break
-            had_iteration_with_no_new_tool_exec = True
-            tool_output = (
-                f"{tool_output}\n\n"
-                "[Note] The tool call(s) above were already executed with identical arguments. "
-                "Do NOT repeat the same tool call again. If you need more information, "
-                "call a different tool or change the arguments. Otherwise, respond now."
-            )
-        else:
-            had_iteration_with_no_new_tool_exec = False
 
         messages.append(
             {
@@ -416,12 +440,13 @@ async def _agent_loop_events(
         final_content = content
 
     if not (final_content or "").strip():
-        raise HTTPException(
-            status_code=502,
-            detail=(
-                "LLM returned an empty response (no content blocks). "
-                f"variant={model_used}"
-            ),
+        logger.warning(
+            "[Agent Loop] Empty model response after tool execution loop. variant=%s",
+            model_used,
+        )
+        final_content = (
+            "I didn't get a usable response from the model (empty content blocks). "
+            "Please try again."
         )
 
     yield {
@@ -461,12 +486,9 @@ async def _run_agent_loop(
                 usage = incoming_usage
 
     if not (final_content or "").strip():
-        raise HTTPException(
-            status_code=502,
-            detail=(
-                "LLM returned an empty response (no content blocks). "
-                "This often indicates a provider/auth/config issue."
-            ),
+        final_content = (
+            "I didn't get a usable response from the model (empty content blocks). "
+            "Please try again."
         )
 
     return ChatCompletionResponse(

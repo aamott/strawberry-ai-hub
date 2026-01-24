@@ -257,11 +257,12 @@ async def test_chat_with_tools_dynamic_skill_method_called_as_tool(auth_client):
 
 
 @pytest.mark.asyncio
-async def test_chat_dedupes_identical_tool_calls_across_iterations(auth_client):
-    """Hub should not re-execute identical tool calls repeatedly across iterations."""
-    # We patch HubSkillService.execute_tool to count how many times the Hub
-    # actually executes a tool call. The agent loop should cache results and
-    # avoid calling execute_tool twice for identical (name,args) pairs.
+async def test_chat_executes_repeated_tool_calls_across_iterations(auth_client):
+    """Hub executes tool calls as requested, even if the model repeats them.
+
+    The agent loop intentionally does not cache/dedupe tool executions across
+    iterations (tool calls are lightweight and caching complicates control flow).
+    """
     from hub.skill_service import HubSkillService
 
     execute_count = {"count": 0}
@@ -299,7 +300,7 @@ async def test_chat_dedupes_identical_tool_calls_across_iterations(auth_client):
             )
 
     assert response.status_code == 200
-    assert execute_count["count"] == 1
+    assert execute_count["count"] == 3
 
 
 @pytest.mark.asyncio

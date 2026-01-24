@@ -318,16 +318,29 @@ async def search_skills(
             group["devices"],
             key=lambda d: (d["id"] != device.id, d["normalized"])
         )
+
+        device_keys = [d["normalized"] for d in sorted_devices[:max_sample_devices]]
+        preferred_device = device_keys[0] if device_keys else None
+        path = group["path"]
         
         results.append({
-            "path": group["path"],
+            "path": path,
             "signature": group["signature"],
             "summary": group["summary"],
             "docstring": group["docstring"],
-            "devices": [d["normalized"] for d in sorted_devices[:max_sample_devices]],
+            "devices": device_keys,
             "device_names": [d["name"] for d in sorted_devices[:max_sample_devices]],
             "device_count": len(sorted_devices),
             "is_local": group["is_local"],
+            "preferred_device": preferred_device,
+            "call_example": (
+                f"devices.{preferred_device}.{path}(...)" if preferred_device else ""
+            ),
+            "python_exec_example": (
+                f"python_exec(code=\"print(devices.{preferred_device}.{path}(...))\")"
+                if preferred_device
+                else ""
+            ),
         })
     
     return {"results": results, "total": len(results)}

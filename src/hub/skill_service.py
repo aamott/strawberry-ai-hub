@@ -45,6 +45,12 @@ HOW TO EXECUTE SKILLS:
   - devices.<device>.<SkillClass>.<method>(...)
 - Wrap skill calls in print(...), so the result is surfaced to the user.
 
+DEVICE SELECTION:
+- Always choose the device key from the `devices` list returned by search_skills().
+- Prefer `preferred_device` if present.
+- Never invent device keys.
+- Do NOT use offline-mode syntax like device.<SkillClass>.<method>(...) in online mode.
+
 STANDARD OPERATING PROCEDURE:
 1) If the user request could be handled by a skill:
    - Call search_skills with a concise query.
@@ -157,13 +163,30 @@ class DevicesProxy:
         
         for key, group in sorted(skill_groups.items(), key=lambda x: x[0][0]):
             sorted_devices = sorted(set(group["devices"]))
-            results.append({
-                "path": group["path"],
-                "signature": group["signature"],
-                "summary": group["summary"],
-                "devices": sorted_devices[:max_devices],
-                "device_count": len(sorted_devices),
-            })
+            device_sample = sorted_devices[:max_devices]
+            preferred_device = device_sample[0] if device_sample else None
+            path = group["path"]
+            results.append(
+                {
+                    "path": path,
+                    "signature": group["signature"],
+                    "summary": group["summary"],
+                    "devices": device_sample,
+                    "device_count": len(sorted_devices),
+                    # TODO: replace "preferred_device" with instructions to prioritize executing from the current device, 
+                    # and a reminder of "current_device: {current_device_name}" somewhere it won't be 
+                    # repeated once per result
+                    "preferred_device": preferred_device, 
+                    "call_example": (
+                        f"devices.{preferred_device}.{path}(...)" if preferred_device else ""
+                    ),
+                    "python_exec_example": (
+                        f"python_exec(code=\"print(devices.{preferred_device}.{path}(...))\")"
+                        if preferred_device
+                        else ""
+                    ),
+                }
+            )
         
         return results
     

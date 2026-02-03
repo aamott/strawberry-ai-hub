@@ -1,5 +1,6 @@
 """Main FastAPI application for Strawberry AI Hub."""
 
+import logging
 import os
 import sys
 from contextlib import asynccontextmanager
@@ -12,6 +13,7 @@ import uvicorn
 
 from .config import HUB_ROOT, settings
 from .database import dispose_engine, init_db
+from .logging_config import configure_logging
 from .tensorzero_gateway import get_gateway, shutdown_gateway
 from .routers import (
     auth_router,
@@ -26,6 +28,9 @@ from .routers import (
 from .routers.websocket import connection_manager
 
 
+logger = logging.getLogger(__name__)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
@@ -36,17 +41,24 @@ async def lifespan(app: FastAPI):
         project_root = Path(__file__).parent.parent.parent
         load_dotenv(project_root / ".env", override=False)
 
-        print("Initializing database...")
+        log_file = configure_logging(
+            settings.log_dir,
+            settings.log_max_bytes,
+            settings.log_retention_days,
+            settings.debug,
+        )
+        logger.info("Logging to %s", log_file)
+        logger.info("Initializing database...")
         await init_db()
-        print("Initializing TensorZero gateway...")
+        logger.info("Initializing TensorZero gateway...")
         await get_gateway()
-        print("Hub ready!")
+        logger.info("Hub ready!")
     
     yield
     
     # Shutdown - close all resources to ensure clean exit
     if "pytest" not in sys.modules:
-        print("Shutting down...")
+        logger.info("Shutting down...")
     
     # Shutdown TensorZero gateway
     try:

@@ -5,6 +5,7 @@ import logging
 import uuid
 from typing import Dict, Any
 from datetime import datetime, timezone
+from ..config import settings
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException
 from sqlalchemy import select
@@ -290,7 +291,11 @@ async def websocket_device_endpoint(
             
             elif msg_type == "ping":
                 # Heartbeat ping
+                if settings.log_ping_pong:
+                    logger.debug("Received ping from %s", device.id)
                 await websocket.send_json({"type": "pong"})
+                if settings.log_ping_pong:
+                    logger.debug("Sent pong to %s", device.id)
             
             else:
                 logger.warning(f"Unknown message type from {device.id}: {msg_type}")

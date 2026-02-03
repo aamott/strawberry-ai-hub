@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth import get_current_user, create_access_token
 from ..config import settings
 from ..database import get_db, Device, User
+from ..routers.websocket import connection_manager
 
 router = APIRouter(prefix="/api/devices", tags=["devices"])
 
@@ -44,7 +45,22 @@ async def get_my_devices(
     # Admins can use the separate admin router if they need a global view.
     
     result = await db.execute(select(Device).where(Device.user_id == current_user.id))
-    return result.scalars().all()
+    devices_db = result.scalars().all()
+    
+    # Compute is_active based on WebSocket connection status
+    devices = []
+    for device in devices_db:
+        is_connected = connection_manager.is_connected(device.id)
+        devices.append(
+            DeviceResponse(
+                id=device.id,
+                name=device.name,
+                is_active=is_connected,
+                last_seen=device.last_seen,
+                created_at=device.created_at,
+            )
+        )
+    return devices
 
 
 @router.post("/token", response_model=DeviceTokenResponse)

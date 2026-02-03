@@ -42,7 +42,7 @@ async def test_device_status_lifecycle(client, db_session):
     assert my_device["is_active"] is False  # No WS connection
     
     # 3. Mock WS connection - patch the actual module where connection_manager lives
-    with patch("hub.routers.websocket.connection_manager") as mock_cm:
+    with patch("hub.routers.devices.connection_manager") as mock_cm:
         mock_cm.is_connected.return_value = True
         
         response = await client.get("/api/devices", headers=user_auth_headers)
@@ -52,7 +52,7 @@ async def test_device_status_lifecycle(client, db_session):
         assert my_device["is_active"] is True  # WS connected
     
     # 4. Mock WS disconnection
-    with patch("hub.routers.websocket.connection_manager") as mock_cm:
+    with patch("hub.routers.devices.connection_manager") as mock_cm:
         mock_cm.is_connected.return_value = False
         
         response = await client.get("/api/devices", headers=user_auth_headers)

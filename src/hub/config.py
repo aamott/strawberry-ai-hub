@@ -1,7 +1,7 @@
 """Hub configuration using Pydantic Settings."""
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -58,6 +58,25 @@ class Settings(BaseSettings):
     # Skill Registry
     skill_expiry_seconds: int = 1800  # 30 minutes without heartbeat
 
+    # Logging
+    log_dir: Path = Field(
+        default_factory=lambda: HUB_ROOT / "logs",
+        description="Directory to store Hub log files.",
+    )
+    log_max_bytes: int = Field(
+        default=1_048_576,
+        description="Maximum log file size before rotation (in bytes).",
+    )
+    log_retention_days: int = Field(
+        default=5,
+        ge=0,
+        description="Number of days to retain rotated log files.",
+    )
+    log_ping_pong: bool = Field(
+        default=False,
+        description="Enable verbose ping/pong logging for device websockets.",
+    )
+
     # Agent loop (online tools)
     agent_max_iterations: int = Field(
         default=5,
@@ -87,6 +106,22 @@ class Settings(BaseSettings):
             database_path = (HUB_ROOT / relative_path).resolve()
             return f"{sqlite_prefix}{database_path.as_posix()}"
         return value
+
+    @field_validator("log_dir", mode="before")
+    @classmethod
+    def normalize_log_dir(cls, value: Union[str, Path]) -> Path:
+        """Normalize log directory paths relative to the hub root.
+
+        Args:
+            value: The configured log directory.
+
+        Returns:
+            An absolute path for the log directory.
+        """
+        path = value if isinstance(value, Path) else Path(value)
+        if not path.is_absolute():
+            return (HUB_ROOT / path).resolve()
+        return path
 
 
 # Global settings instance

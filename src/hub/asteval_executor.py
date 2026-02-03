@@ -196,24 +196,22 @@ async def execute_with_asteval(
 
     def run_in_thread():
         """Run asteval in a thread so sync proxies can block without deadlock."""
-        output_buffer: List[str] = []
-
-        def custom_print(*args, **kwargs):
-            """Capture print output."""
-            text = " ".join(str(a) for a in args)
-            output_buffer.append(text)
+        import io
+        
+        # Use StringIO as writer to capture print output
+        output_buffer = io.StringIO()
 
         # Create sync wrapper for devices proxy
         sync_devices = SyncDevicesProxy(devices_proxy, loop)
 
         # Create a fresh interpreter (thread-safe)
+        # Use writer parameter to capture print output directly
         aeval = Interpreter(
             usersyms={
                 "devices": sync_devices,
                 "device_manager": sync_devices,  # Alias
-                "print": custom_print,
             },
-            no_print=True,  # We handle print ourselves
+            writer=output_buffer,  # Capture print output to StringIO
         )
 
         try:
@@ -231,8 +229,8 @@ async def execute_with_asteval(
                 logger.error(f"[asteval] Errors: {error_str}")
                 return {"error": error_str}
 
-            # Combine output
-            output = "\n".join(output_buffer).strip()
+            # Combine output - get captured print output from StringIO
+            output = output_buffer.getvalue().strip()
             if not output and result is not None:
                 output = str(result)
 

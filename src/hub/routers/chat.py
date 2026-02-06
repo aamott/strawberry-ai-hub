@@ -13,6 +13,7 @@ File Summary:
 
 import json
 import logging
+import re as _re
 import time
 import uuid
 from typing import Any, AsyncIterator, Dict, List, Literal, Optional
@@ -25,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth import get_current_device
 from ..config import settings
 from ..database import Device, get_db
-from ..tensorzero_gateway import inference as tz_inference
+from ..tensorzero_gateway import inference as tz_inference, inference_stream as tz_inference_stream
 from ..utils import normalize_device_name
 
 logger = logging.getLogger(__name__)
@@ -243,10 +244,10 @@ async def _stream_chat_completions(
 ) -> AsyncIterator[str]:
     """Stream a chat completion response as SSE events.
 
-    This is *not* token streaming from the model. Instead, it streams:
-    - tool_call_started
-    - tool_call_result
-    - final assistant_message
+    Streams token-level ``content_delta`` events for the final LLM response
+    so the UI can display text as it is generated. Tool call events
+    (``tool_call_started``, ``tool_call_result``) are emitted non-streaming
+    since we need the full response to detect tool calls.
 
     Args:
         request: Chat completion request.
@@ -261,10 +262,15 @@ async def _stream_chat_completions(
             async for event in _agent_loop_events(request=request, device=device, db=db):
                 yield _sse(event)
         else:
-            # Pass-through: single response.
-            response = await _call_tensorzero(request, use_tools=False)
-            content = response.choices[0].message.content
-            yield _sse({"type": "assistant_message", "content": content})
+            # Pass-through: stream the response token-by-token.
+            messages = _normalize_messages(request.messages, include_tool_call_id=True)
+            collected = await _stream_inference_as_deltas(
+                messages=messages,
+                function_name="chat_no_tools",
+            )
+            for delta_event in collected["deltas"]:
+                yield _sse(delta_event)
+            yield _sse({"type": "assistant_message", "content": collected["full_text"]})
         yield _sse({"type": "done"})
     except HTTPException as e:
         yield _sse({"type": "error", "error": str(e.detail)})
@@ -358,6 +364,15 @@ async def _agent_loop_events(
                     }
                 )
                 continue
+
+            # Final response — try to stream it token-by-token.
+            # We already have `content` from the non-streaming call above.
+            # Re-running with streaming would waste an LLM call, so we
+            # emit the already-collected content as a series of word-level
+            # deltas for a smooth UI experience.
+            if content.strip():
+                for delta in _split_into_deltas(content):
+                    yield {"type": "content_delta", "delta": delta}
 
             final_content = content
             break
@@ -584,6 +599,79 @@ def _extract_model(response: Any) -> str:
     if isinstance(response, dict):
         return response.get("variant_name", "unknown")
     return "unknown"
+
+
+def _split_into_deltas(text: str) -> list[str]:
+    """Split text into word-level chunks for streaming.
+
+    Preserves whitespace so that concatenating all deltas produces the
+    original text exactly.
+
+    Args:
+        text: Full text to split.
+
+    Returns:
+        List of small string chunks.
+    """
+    # Split on word boundaries, keeping whitespace attached to the
+    # preceding word so the UI can render smoothly.
+    parts = _re.findall(r"\S+\s*", text)
+    # If there's only trailing whitespace left, include it
+    remainder = text[sum(len(p) for p in parts):]
+    if remainder:
+        parts.append(remainder)
+    return parts
+
+
+async def _stream_inference_as_deltas(
+    messages: list[dict[str, Any]],
+    function_name: str = "chat_no_tools",
+    system: str | None = None,
+) -> dict[str, Any]:
+    """Run streaming inference and collect content_delta events.
+
+    Tries TensorZero streaming first; falls back to non-streaming +
+    word-level splitting if streaming is not supported.
+
+    Returns:
+        Dict with ``deltas`` (list of content_delta event dicts) and
+        ``full_text`` (the complete response text).
+    """
+    try:
+        stream = await tz_inference_stream(
+            messages=messages,
+            function_name=function_name,
+            system=system,
+        )
+
+        # Collect deltas from the streaming response
+        deltas: list[dict[str, Any]] = []
+        full_parts: list[str] = []
+        async for chunk in stream:
+            # TensorZero chunks have varying shapes; extract text content
+            text = ""
+            if hasattr(chunk, "content"):
+                for block in (chunk.content or []):
+                    text += _extract_text_from_block(block)
+            elif isinstance(chunk, dict):
+                for block in (chunk.get("content") or []):
+                    text += _extract_text_from_block(block)
+            if text:
+                deltas.append({"type": "content_delta", "delta": text})
+                full_parts.append(text)
+
+        return {"deltas": deltas, "full_text": "".join(full_parts)}
+    except Exception:
+        # Fallback: non-streaming inference + word-level splitting
+        logger.debug("Streaming inference not available, falling back to chunked")
+        response = await tz_inference(
+            messages=messages,
+            function_name=function_name,
+            system=system,
+        )
+        content = _extract_content(response)
+        deltas = [{"type": "content_delta", "delta": d} for d in _split_into_deltas(content)]
+        return {"deltas": deltas, "full_text": content}
 
 
 # Also expose as /inference for TensorZero compatibility

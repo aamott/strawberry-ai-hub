@@ -113,3 +113,39 @@ async def inference(
     )
     
     return response
+
+
+async def inference_stream(
+    messages: list[dict[str, str]],
+    function_name: str = "chat",
+    system: Optional[str] = None,
+    **kwargs: Any,
+) -> Any:
+    """Run streaming inference through the TensorZero gateway.
+
+    Uses ``stream=True`` so the gateway yields chunks as the model
+    generates them.
+
+    Args:
+        messages: List of chat messages in OpenAI format.
+        function_name: TensorZero function to call.
+        system: Optional system prompt to include.
+        **kwargs: Additional arguments passed to gateway.inference().
+
+    Returns:
+        An async iterator of streaming chunks.
+    """
+    gateway = await get_gateway()
+
+    tz_input: dict[str, Any] = {"messages": messages}
+    if system:
+        tz_input["system"] = system
+
+    stream = await gateway.inference(
+        function_name=function_name,
+        input=tz_input,
+        stream=True,
+        **kwargs,
+    )
+
+    return stream

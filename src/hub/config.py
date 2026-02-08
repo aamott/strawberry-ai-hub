@@ -77,6 +77,15 @@ class Settings(BaseSettings):
         description="Enable verbose ping/pong logging for device websockets.",
     )
 
+    # System prompt override
+    system_prompt: str = Field(
+        default="",
+        description=(
+            "Custom system prompt for the Hub agent loop. "
+            "Leave empty to use the built-in default prompt."
+        ),
+    )
+
     # Agent loop (online tools)
     agent_max_iterations: int = Field(
         default=5,

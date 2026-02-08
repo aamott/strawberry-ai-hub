@@ -24,51 +24,89 @@ from .utils import normalize_device_name
 logger = logging.getLogger(__name__)
 
 
-# System prompt for online mode (Hub executes tools)
-ONLINE_MODE_PROMPT = """SYSTEM INSTRUCTIONS (read carefully and follow exactly):
+# Default system prompt for online mode (Hub executes tools).
+# Users can override this via the SYSTEM_PROMPT env var / settings.
+# The placeholder {device_keys} is replaced at runtime with the
+# list of valid device keys.
+DEFAULT_ONLINE_MODE_PROMPT = """SYSTEM INSTRUCTIONS (read carefully and follow exactly):
 
 You are Strawberry, a helpful AI assistant with access to skills across all connected devices.
 
-You have exactly 3 tools:
-1) search_skills(query)
-2) describe_function(path)
-3) python_exec(code)
+## Available Tools
 
-CRITICAL BEHAVIOR:
+You have exactly 3 tools:
+1) search_skills(query) - Find skills by keyword (searches method names and descriptions)
+2) describe_function(path) - Get full signature for a skill method
+3) python_exec(code) - Execute Python code that calls skills
+
+## Critical Behavior
+
 - Do NOT ask the user for permission to search for skills. If a user asks for something that likely needs a skill, immediately call search_skills.
 - Do NOT say "I can't" until you have searched for relevant skills and attempted execution.
 - After you find the right skill, execute it immediately.
+- Do NOT rerun the same tool call to double-check; use the first result.
+- After tool calls complete, ALWAYS provide a final natural-language answer.
 
-HOW TO EXECUTE SKILLS:
+## How to Execute Skills
+
 - Always execute skills via python_exec.
 - Use the `devices` object for remote devices:
   - devices.<device>.<SkillClass>.<method>(...)
 - Wrap skill calls in print(...), so the result is surfaced to the user.
 
-DEVICE SELECTION:
+## Device Selection
+
 - Always choose the device key from the `devices` list returned by search_skills().
 - Prefer `preferred_device` if present.
 - Never invent device keys.
 - Do NOT use offline-mode syntax like device.<SkillClass>.<method>(...) in online mode.
 
-STANDARD OPERATING PROCEDURE:
+## Searching Tips
+
+search_skills matches against method names, skill names, and descriptions.
+Search by **action** or **verb**, not by specific entity/object names.
+- To turn on a lamp, search 'turn on' not 'lamp'.
+- To set brightness, search 'light' or 'brightness'.
+- To look up docs, search 'documentation' or 'query'.
+
+## Standard Operating Procedure
+
 1) If the user request could be handled by a skill:
-   - Call search_skills with a concise query.
+   - Call search_skills with a concise query (use action words).
 2) Pick the best match (prefer the highest-relevance entry and a device that is available).
 3) Call python_exec with code that prints the skill result.
 4) Respond naturally using the returned output.
 
-EXAMPLE (Weather):
+## Examples
+
+Weather:
 - User: "What's the weather in Roy, UT?"
-- You MUST do:
   a) search_skills(query="weather")
   b) python_exec(code="print(devices.<device>.WeatherSkill.get_current_weather('Roy, UT'))")
 
-EXAMPLE (Calculator):
+Calculator:
 - User: "Add 5 and 3"
-- You MUST do:
   a) search_skills(query="calculator")
   b) python_exec(code="print(devices.<device>.CalculatorSkill.add(a=5, b=3))")
+
+Smart Home (turn on/off, lights, locks, media):
+- User: "Turn on the short lamp"
+  a) search_skills(query="turn on")
+  b) python_exec(code="print(devices.<device>.HomeAssistantSkill.HassTurnOn(name='short lamp'))")
+
+Documentation lookup:
+- User: "Look up React docs"
+  a) search_skills(query="documentation")
+  b) python_exec(code="print(devices.<device>.Context7Skill.resolve_library_id(libraryName='react'))")
+  c) python_exec(code="print(devices.<device>.Context7Skill.query_docs(libraryId='...', query='getting started'))")
+
+## Rules
+
+1. Use python_exec to call skills - do NOT call skill methods directly as tools.
+2. Do NOT output code blocks or ```tool_outputs``` - use actual tool calls.
+3. Keep responses concise and friendly.
+4. For smart-home commands (turn on/off, lights, locks, media), look for HomeAssistantSkill. Pass the device/entity name as the 'name' kwarg.
+5. If a tool call fails with 'Unknown tool', immediately switch to python_exec and proceed.
 
 If there are multiple possible devices or skills, choose the most relevant and proceed. Only ask a question if you are missing required user input (e.g., location is missing).
 """
@@ -123,15 +161,25 @@ class DevicesProxy:
         )
         skills = result.scalars().all()
         
-        # Filter by query
+        # Filter by query — try all-words first for precision, then
+        # fall back to any-word matching if nothing is found.  This keeps
+        # "turn on" from matching everything via "on" while still allowing
+        # single-concept queries like "react documentation" to work.
         if query:
-            query_lower = query.lower()
-            skills = [
-                s for s in skills
-                if query_lower in s.function_name.lower()
-                or query_lower in s.class_name.lower()
-                or (s.docstring and query_lower in s.docstring.lower())
-            ]
+            query_words = query.lower().split()
+
+            def _matches(s: Skill, mode: str) -> bool:
+                searchable = (
+                    f"{s.function_name} {s.class_name} "
+                    f"{s.docstring or ''}"
+                ).lower()
+                check = all if mode == "all" else any
+                return check(w in searchable for w in query_words)
+
+            filtered = [s for s in skills if _matches(s, "all")]
+            if not filtered:
+                filtered = [s for s in skills if _matches(s, "any")]
+            skills = filtered
         
         # Group by (class_name, function_name, signature)
         skill_groups: Dict[tuple, Dict] = {}
@@ -541,8 +589,11 @@ class HubSkillService:
     async def get_system_prompt(self, requesting_device_key: str) -> str:
         """Get the system prompt for online mode.
 
-        This prompt includes the set of valid `devices.<device>` keys so the model
-        does not invent device names.
+        Uses the custom system prompt from settings if configured,
+        otherwise falls back to DEFAULT_ONLINE_MODE_PROMPT.
+
+        The prompt includes the set of valid ``devices.<device>`` keys
+        so the model does not invent device names.
         """
         devices = await self.devices._get_user_devices()
 
@@ -555,10 +606,19 @@ class HubSkillService:
             filtered_device_keys.append(key)
 
         device_keys = ", ".join(filtered_device_keys)
+
+        # Use custom prompt from settings if provided, else default.
+        base_prompt = (
+            settings.system_prompt.strip()
+            if settings.system_prompt and settings.system_prompt.strip()
+            else DEFAULT_ONLINE_MODE_PROMPT
+        )
+
         return (
-            f"{ONLINE_MODE_PROMPT}\n\n"
+            f"{base_prompt}\n\n"
             "VALID DEVICE KEYS (use exactly these after 'devices.'):\n"
             f"{device_keys or '(none)'}\n\n"
             "IMPORTANT:\n"
-            "- Never invent device names. Always pick a device from search_skills() results or from the list above.\n"
+            "- Never invent device names. Always pick a device from "
+            "search_skills() results or from the list above.\n"
         )

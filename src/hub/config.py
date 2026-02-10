@@ -72,9 +72,9 @@ class Settings(BaseSettings):
         ge=0,
         description="Number of days to retain rotated log files.",
     )
-    log_ping_pong: bool = Field(
-        default=False,
-        description="Enable verbose ping/pong logging for device websockets.",
+    uvicorn_log_level: str = Field(
+        default="info",
+        description="Log level for uvicorn loggers (e.g., info, warning, error).",
     )
 
     # System prompt override

@@ -126,6 +126,7 @@ def configure_logging(
     log_max_bytes: int,
     log_retention_days: int,
     debug: bool,
+    uvicorn_log_level: str = "info",
 ) -> Path:
     """Configure Hub logging to write to file and stdout.
 
@@ -134,6 +135,7 @@ def configure_logging(
         log_max_bytes: Maximum size of a log file before rotation.
         log_retention_days: Days to keep rotated log files.
         debug: Whether to enable debug-level logging.
+        uvicorn_log_level: Log level for uvicorn loggers (default: info).
 
     Returns:
         The path to the active log file.
@@ -168,11 +170,20 @@ def configure_logging(
     root_logger.addHandler(file_handler)
     root_logger.addHandler(stream_handler)
 
+    # Tone down noisy dependency loggers while preserving debug elsewhere.
+    sqlalchemy_level = logging.INFO if debug else logging.WARNING
+    for logger_name in ("sqlalchemy.engine", "sqlalchemy.pool"):
+        logging.getLogger(logger_name).setLevel(sqlalchemy_level)
+
+    aiosqlite_level = logging.INFO if debug else logging.WARNING
+    logging.getLogger("aiosqlite").setLevel(aiosqlite_level)
+
+    uvi_level = getattr(logging, uvicorn_log_level.upper(), logging.INFO)
     for logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
         logger = logging.getLogger(logger_name)
         logger.handlers.clear()
         logger.propagate = True
-        logger.setLevel(log_level)
+        logger.setLevel(uvi_level)
 
     removed = _purge_old_logs(log_dir, log_file, log_retention_days)
     if removed:

@@ -46,6 +46,7 @@ async def lifespan(app: FastAPI):
             settings.log_max_bytes,
             settings.log_retention_days,
             settings.debug,
+            settings.uvicorn_log_level,
         )
         logger.info("Logging to %s", log_file)
         logger.info("Initializing database...")

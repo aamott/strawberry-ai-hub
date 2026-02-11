@@ -38,8 +38,7 @@ class ProtocolVersionMiddleware(BaseHTTPMiddleware):
 
         if version is not None and version not in SUPPORTED_VERSIONS:
             logger.warning(
-                "Rejected request with unsupported protocol version %r "
-                "from %s %s",
+                "Rejected request with unsupported protocol version %r from %s %s",
                 version,
                 request.method,
                 request.url.path,

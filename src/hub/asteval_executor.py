@@ -86,6 +86,7 @@ class SyncSkillProxy:
 
     def __getattr__(self, method_name: str) -> SyncMethodProxy:
         """Get a sync proxy for a method."""
+
         # Create an async method that calls execute_skill
         async def async_method(*args, **kwargs):
             return await self._devices_proxy.execute_skill(
@@ -197,7 +198,7 @@ async def execute_with_asteval(
     def run_in_thread():
         """Run asteval in a thread so sync proxies can block without deadlock."""
         import io
-        
+
         # Use StringIO as writer to capture print output
         output_buffer = io.StringIO()
 

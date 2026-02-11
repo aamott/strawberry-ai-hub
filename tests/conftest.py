@@ -2,9 +2,10 @@
 
 import os
 import sys
-import pytest
 from pathlib import Path
-from httpx import AsyncClient, ASGITransport
+
+import pytest
+from httpx import ASGITransport, AsyncClient
 
 # Ensure the repo root is on sys.path so we can import the top-level `shared`
 # package when tests are executed from the ai-hub project directory.
@@ -16,6 +17,7 @@ if str(REPO_ROOT) not in sys.path:
 test_env = Path(__file__).parent.parent / ".env.test"
 if test_env.exists():
     from dotenv import load_dotenv
+
     load_dotenv(test_env)
 
 # Set test database BEFORE importing any hub modules
@@ -39,15 +41,15 @@ async def setup_test_db():
     if TEST_DB_PATH.exists():
         await dispose_engine()
         TEST_DB_PATH.unlink()
-    
+
     # Reset engine to pick up test DATABASE_URL
     reset_engine()
-    
+
     # Initialize database tables
     await database.init_db()
-    
+
     yield
-    
+
     # Cleanup - reset engine and remove test db
     await dispose_engine()
     reset_engine()
@@ -59,7 +61,7 @@ async def setup_test_db():
 async def client(setup_test_db):
     """Create test client."""
     from hub.main import app
-    
+
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
@@ -76,7 +78,7 @@ async def auth_client(client):
             json={"username": "admin", "password": "password"},
         )
         assert setup_response.status_code == 200, f"Setup failed: {setup_response.text}"
-    
+
     # Login with admin credentials
     login_response = await client.post(
         "/api/users/login",
@@ -85,19 +87,21 @@ async def auth_client(client):
     assert login_response.status_code == 200, f"Login failed: {login_response.text}"
     data = login_response.json()
     user_token = data["access_token"]
-    
+
     # Set user auth header temporarily to create a device
     client.headers["Authorization"] = f"Bearer {user_token}"
-    
+
     # Create a device for the user
     device_response = await client.post(
         "/api/devices/token",
         json={"name": "Test Device"},
     )
-    assert device_response.status_code == 200, f"Device creation failed: {device_response.text}"
+    assert device_response.status_code == 200, (
+        f"Device creation failed: {device_response.text}"
+    )
     device_data = device_response.json()
     device_token = device_data["token"]
-    
+
     # Switch to device auth for the rest of the tests
     client.headers["Authorization"] = f"Bearer {device_token}"
     yield client

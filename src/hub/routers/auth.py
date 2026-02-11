@@ -1,19 +1,22 @@
 """Authentication endpoints."""
 
 from datetime import datetime
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from ..database import Device
 from ..auth import (
     create_access_token,
     get_current_device,
 )
+from ..database import Device
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+
 class DeviceInfoResponse(BaseModel):
     """Device information."""
+
     device_id: str
     name: str
     user_id: str
@@ -47,6 +50,5 @@ async def refresh_token(
         subject_type="device",
         name=device.name,
     )
-    
-    return {"access_token": access_token}
 
+    return {"access_token": access_token}

@@ -6,7 +6,6 @@ from typing import Optional, Union
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 HUB_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -22,39 +21,39 @@ def get_default_database_url() -> str:
 
 class Settings(BaseSettings):
     """Hub configuration settings.
-    
+
     Loads from environment variables and .env file.
     """
-    
+
     model_config = SettingsConfigDict(
         env_file=str(HUB_ROOT / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
-    
+
     # Server
     host: str = "0.0.0.0"
     port: int = 8000
     debug: bool = False
-    
+
     # Security
     secret_key: str = Field(
         default="CHANGE-ME-IN-PRODUCTION",
         description="Secret key for JWT signing",
     )
     access_token_expire_minutes: int = 43200  # 30 days
-    
+
     # Database
     database_url: str = Field(default_factory=get_default_database_url)
-    
+
     # LLM
     openai_api_key: Optional[str] = None
     openai_base_url: str = "https://api.openai.com/v1"
     default_model: str = "gpt-4o-mini"
-    
+
     # Google AI Studio (alternative)
     google_ai_studio_api_key: Optional[str] = None
-    
+
     # Skill Registry
     skill_expiry_seconds: int = 1800  # 30 minutes without heartbeat
 
@@ -135,4 +134,3 @@ class Settings(BaseSettings):
 
 # Global settings instance
 settings = Settings()
-

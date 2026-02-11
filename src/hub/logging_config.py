@@ -8,7 +8,6 @@ from datetime import datetime, timedelta, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-
 DEFAULT_LOG_FILENAME = "hub.log"
 
 

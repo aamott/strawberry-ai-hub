@@ -20,7 +20,7 @@ _gateway_initialized: bool = False
 
 def get_config_path() -> str:
     """Get the path to tensorzero.toml config file.
-    
+
     Returns:
         Absolute path to the config file.
     """
@@ -28,7 +28,7 @@ def get_config_path() -> str:
     config_path = os.getenv("TENSORZERO_CONFIG_PATH")
     if config_path:
         return config_path
-    
+
     # Default: config/tensorzero.toml relative to project root
     # The project root is two levels up from this file (src/hub/)
     hub_dir = Path(__file__).parent
@@ -38,10 +38,10 @@ def get_config_path() -> str:
 
 async def get_gateway() -> AsyncTensorZeroGateway:
     """Get or create the TensorZero gateway instance.
-    
+
     Returns:
         The initialized AsyncTensorZeroGateway instance.
-        
+
     Raises:
         RuntimeError: If gateway initialization fails.
     """
@@ -51,12 +51,12 @@ async def get_gateway() -> AsyncTensorZeroGateway:
         raise RuntimeError(
             "TensorZero is not installed. Install the 'tensorzero' package to enable Hub chat."
         )
-    
+
     if _gateway is not None and _gateway_initialized:
         return _gateway
-    
+
     config_path = get_config_path()
-    
+
     # Build embedded gateway (no external process needed)
     # clickhouse_url is optional - omit for no observability
     _gateway = await AsyncTensorZeroGateway.build_embedded(
@@ -64,14 +64,14 @@ async def get_gateway() -> AsyncTensorZeroGateway:
         async_setup=True,
     )
     _gateway_initialized = True
-    
+
     return _gateway
 
 
 async def shutdown_gateway() -> None:
     """Shutdown the TensorZero gateway gracefully."""
     global _gateway, _gateway_initialized
-    
+
     if _gateway is not None:
         # AsyncTensorZeroGateway should be used as context manager,
         # but for singleton pattern we manage lifecycle manually
@@ -90,28 +90,28 @@ async def inference(
     **kwargs: Any,
 ) -> dict[str, Any]:
     """Run inference through the TensorZero gateway.
-    
+
     Args:
         messages: List of chat messages in OpenAI format.
         function_name: TensorZero function to call (default: "chat").
         system: Optional system prompt to include.
         **kwargs: Additional arguments passed to gateway.inference().
-        
+
     Returns:
         The inference response from TensorZero.
     """
     gateway = await get_gateway()
-    
+
     tz_input: dict[str, Any] = {"messages": messages}
     if system:
         tz_input["system"] = system
-    
+
     response = await gateway.inference(
         function_name=function_name,
         input=tz_input,
         **kwargs,
     )
-    
+
     return response
 
 

@@ -37,6 +37,7 @@ def test_normalize_device_name(case: dict):
 
 # ── Protocol version middleware tests ───────────────────────────────────────
 
+
 @pytest.fixture
 def anyio_backend():
     return "asyncio"

@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import get_current_device
-from ..database import Device, Session, Message, get_db
+from ..database import Device, Message, Session, get_db
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -52,9 +52,10 @@ async def _get_session_for_user(
 
 class SessionCreate(BaseModel):
     """Request to create a new session.
-    
+
     Note: Title is auto-generated from the first user message.
     """
+
     pass
 
 
@@ -267,11 +268,13 @@ async def add_message(
     # Update session metadata
     session.last_activity = now
     session.message_count += 1
-    
+
     # Set title from first user message if not already set
     if session.title is None and request.role == "user":
-        session.title = request.content[:50] + ("..." if len(request.content) > 50 else "")
-    
+        session.title = request.content[:50] + (
+            "..." if len(request.content) > 50 else ""
+        )
+
     await db.commit()
     await db.refresh(message)
 
@@ -281,7 +284,6 @@ async def add_message(
         content=message.content,
         created_at=message.created_at,
     )
-
 
 
 @router.delete("/{session_id}")
@@ -302,6 +304,7 @@ async def delete_session(
 
 class SessionUpdate(BaseModel):
     """Request to update a session."""
+
     title: Optional[str] = None
 
 

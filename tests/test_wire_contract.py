@@ -62,8 +62,7 @@ def test_skill_execute_request(fixtures: dict):
 
 def test_skill_execute_response_shape(fixtures: dict):
     """Skill execute response must have required keys."""
-    for key in ("skill_execute_response_success",
-                "skill_execute_response_failure"):
+    for key in ("skill_execute_response_success", "skill_execute_response_failure"):
         resp = fixtures[key]
         assert "success" in resp
         assert "result" in resp
@@ -76,8 +75,7 @@ def test_skill_search_response_shape(fixtures: dict):
     assert "results" in resp
     assert "total" in resp
     result = resp["results"][0]
-    for field in ("path", "signature", "summary", "devices",
-                  "device_count", "is_local"):
+    for field in ("path", "signature", "summary", "devices", "device_count", "is_local"):
         assert field in result, f"Missing field: {field}"
 
 

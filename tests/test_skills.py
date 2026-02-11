@@ -20,12 +20,12 @@ async def test_register_skills(auth_client):
             "docstring": "Stop playback",
         },
     ]
-    
+
     response = await auth_client.post(
         "/skills/register",
         json={"skills": skills},
     )
-    
+
     assert response.status_code == 200
     data = response.json()
     assert data["message"] == "Registered 2 skills"
@@ -43,12 +43,12 @@ async def test_list_skills(auth_client):
             "docstring": None,
         },
     ]
-    
+
     await auth_client.post("/skills/register", json={"skills": skills})
-    
+
     # List
     response = await auth_client.get("/skills")
-    
+
     assert response.status_code == 200
     data = response.json()
     assert data["total"] == 1
@@ -68,10 +68,10 @@ async def test_heartbeat(auth_client):
         },
     ]
     await auth_client.post("/skills/register", json={"skills": skills})
-    
+
     # Heartbeat
     response = await auth_client.post("/skills/heartbeat")
-    
+
     assert response.status_code == 200
     data = response.json()
     assert "Heartbeat updated for 1 skills" in data["message"]
@@ -96,13 +96,14 @@ async def test_search_skills(auth_client):
         },
     ]
     await auth_client.post("/skills/register", json={"skills": skills})
-    
+
     # Search for music
     response = await auth_client.get("/skills/search", params={"query": "music"})
-    
+
     assert response.status_code == 200
     data = response.json()
     assert data["total"] == 1
-    assert "music" in data["results"][0]["path"].lower() or \
-           "music" in data["results"][0]["summary"].lower()
-
+    assert (
+        "music" in data["results"][0]["path"].lower()
+        or "music" in data["results"][0]["summary"].lower()
+    )

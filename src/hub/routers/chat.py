@@ -37,6 +37,7 @@ router = APIRouter(prefix="/api", tags=["chat"])
 
 class ChatMessage(BaseModel):
     """A single chat message."""
+
     role: Literal["system", "user", "assistant", "tool"]
     content: str
     tool_call_id: Optional[str] = None
@@ -45,11 +46,12 @@ class ChatMessage(BaseModel):
 
 class ChatCompletionRequest(BaseModel):
     """OpenAI-compatible chat completion request with tool execution control.
-    
+
     Attributes:
         enable_tools: If True, Hub runs agent loop and executes tools.
                      If False, Hub just passes through to LLM (Spoke handles tools).
     """
+
     model: str = "gpt-4o-mini"
     messages: List[ChatMessage]
     temperature: Optional[float] = 0.7
@@ -60,6 +62,7 @@ class ChatCompletionRequest(BaseModel):
 
 class ChatChoice(BaseModel):
     """A single completion choice."""
+
     index: int
     message: ChatMessage
     finish_reason: str
@@ -67,6 +70,7 @@ class ChatChoice(BaseModel):
 
 class ChatCompletionResponse(BaseModel):
     """OpenAI-compatible chat completion response."""
+
     id: str
     object: str = "chat.completion"
     created: int
@@ -121,10 +125,10 @@ async def chat_completions(
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """OpenAI-compatible chat completions endpoint.
-    
+
     Routes requests through TensorZero embedded gateway with automatic
     fallback between configured providers.
-    
+
     When enable_tools=True, Hub runs the agent loop and executes tools.
     When enable_tools=False (default), Hub just passes through to LLM.
     """
@@ -315,9 +319,10 @@ def _parse_response_blocks(
 
     if not content.strip() and not tool_calls:
         logger.warning(
-            "[Agent Loop] Empty model step."
-            " variant=%s iteration=%s blocks=%s",
-            model_used, iteration, block_types,
+            "[Agent Loop] Empty model step. variant=%s iteration=%s blocks=%s",
+            model_used,
+            iteration,
+            block_types,
         )
 
     return content, tool_calls, model_used
@@ -336,8 +341,7 @@ async def _execute_single_tool(
         Tuple of (result dict, was_executed).
     """
     execution_key = (
-        f"{tc['name']}:"
-        f"{json.dumps(tc['arguments'] or {}, sort_keys=True, default=str)}"
+        f"{tc['name']}:{json.dumps(tc['arguments'] or {}, sort_keys=True, default=str)}"
     )
 
     if execution_key in seen_keys:
@@ -405,7 +409,11 @@ async def _execute_tool_calls(
         }
 
         result, was_executed = await _execute_single_tool(
-            tc, skill_service, seen_keys, repeated, iteration,
+            tc,
+            skill_service,
+            seen_keys,
+            repeated,
+            iteration,
         )
         if was_executed:
             had_execution = True
@@ -440,11 +448,7 @@ def _should_retry_empty_text(
     already_retried: bool,
 ) -> bool:
     """Check if we should nudge the LLM for a text response."""
-    return (
-        had_tool_execution
-        and not content.strip()
-        and not already_retried
-    )
+    return had_tool_execution and not content.strip() and not already_retried
 
 
 _EMPTY_TEXT_NUDGE = (
@@ -476,13 +480,9 @@ async def _agent_loop_events(
 
     messages: List[Dict[str, Any]] = []
     system_prompt = await skill_service.get_system_prompt(
-        requesting_device_key=normalize_device_name(
-            device.name or ""
-        )
+        requesting_device_key=normalize_device_name(device.name or "")
     )
-    messages.extend(
-        _normalize_messages(request.messages, include_tool_call_id=False)
-    )
+    messages.extend(_normalize_messages(request.messages, include_tool_call_id=False))
     max_iterations = settings.agent_max_iterations
 
     final_content = ""
@@ -498,8 +498,8 @@ async def _agent_loop_events(
             system=system_prompt,
         )
 
-        content, tool_calls, model_used = (
-            _parse_response_blocks(response, iteration=iteration)
+        content, tool_calls, model_used = _parse_response_blocks(
+            response, iteration=iteration
         )
 
         # No tool calls → final text response (or empty-text retry).
@@ -508,9 +508,7 @@ async def _agent_loop_events(
                 had_any_tool_execution, content, did_empty_text_retry
             ):
                 did_empty_text_retry = True
-                messages.append(
-                    {"role": "user", "content": _EMPTY_TEXT_NUDGE}
-                )
+                messages.append({"role": "user", "content": _EMPTY_TEXT_NUDGE})
                 continue
 
             if content.strip():
@@ -522,8 +520,11 @@ async def _agent_loop_events(
         # Execute tool calls via helper generator.
         seen_keys: set[str] = set()
         async for event in _execute_tool_calls(
-            tool_calls, skill_service, seen_keys,
-            repeated_across_iterations, iteration,
+            tool_calls,
+            skill_service,
+            seen_keys,
+            repeated_across_iterations,
+            iteration,
         ):
             if event["type"] == "_tool_summary":
                 tool_results = event["results"]
@@ -534,20 +535,21 @@ async def _agent_loop_events(
 
         messages.append({"role": "assistant", "content": content})
         tool_output = "\n".join(tool_results)
-        messages.append({
-            "role": "user",
-            "content": (
-                f"[Tool Results]\n{tool_output}\n\n"
-                "[Now respond naturally to the user"
-                " based on these results.]"
-            ),
-        })
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    f"[Tool Results]\n{tool_output}\n\n"
+                    "[Now respond naturally to the user"
+                    " based on these results.]"
+                ),
+            }
+        )
         final_content = content
 
     if not (final_content or "").strip():
         logger.warning(
-            "[Agent Loop] Empty model response after"
-            " tool execution loop. variant=%s",
+            "[Agent Loop] Empty model response after tool execution loop. variant=%s",
             model_used,
         )
         final_content = (
@@ -573,13 +575,17 @@ async def _run_agent_loop(
     db: AsyncSession,
 ) -> ChatCompletionResponse:
     """Run agent loop with tool execution.
-    
+
     This is used when enable_tools=True (Hub executes tools).
     """
     # Consume the shared generator and construct the classic JSON response.
     final_content: Optional[str] = None
     model_used = "unknown"
-    usage: dict[str, Any] = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    usage: dict[str, Any] = {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+    }
 
     async for event in _agent_loop_events(request=request, device=device, db=db):
         if not isinstance(event, dict):
@@ -617,9 +623,9 @@ async def _call_tensorzero(
     use_tools: bool = False,
 ) -> ChatCompletionResponse:
     """Route request through TensorZero embedded gateway.
-    
+
     TensorZero handles provider selection and fallback automatically.
-    
+
     Args:
         request: The chat completion request
         use_tools: If False, uses chat_no_tools function (Spoke handles tools)
@@ -708,7 +714,7 @@ def _split_into_deltas(text: str) -> list[str]:
     # preceding word so the UI can render smoothly.
     parts = _re.findall(r"\S+\s*", text)
     # If there's only trailing whitespace left, include it
-    remainder = text[sum(len(p) for p in parts):]
+    remainder = text[sum(len(p) for p in parts) :]
     if remainder:
         parts.append(remainder)
     return parts
@@ -742,10 +748,10 @@ async def _stream_inference_as_deltas(
             # TensorZero chunks have varying shapes; extract text content
             text = ""
             if hasattr(chunk, "content"):
-                for block in (chunk.content or []):
+                for block in chunk.content or []:
                     text += _extract_text_from_block(block)
             elif isinstance(chunk, dict):
-                for block in (chunk.get("content") or []):
+                for block in chunk.get("content") or []:
                     text += _extract_text_from_block(block)
             if text:
                 deltas.append({"type": "content_delta", "delta": text})
@@ -761,7 +767,9 @@ async def _stream_inference_as_deltas(
             system=system,
         )
         content = _extract_content(response)
-        deltas = [{"type": "content_delta", "delta": d} for d in _split_into_deltas(content)]
+        deltas = [
+            {"type": "content_delta", "delta": d} for d in _split_into_deltas(content)
+        ]
         return {"deltas": deltas, "full_text": content}
 
 
@@ -773,4 +781,3 @@ async def inference(
 ) -> ChatCompletionResponse:
     """TensorZero-style inference endpoint."""
     return await chat_completions(request, device)
-

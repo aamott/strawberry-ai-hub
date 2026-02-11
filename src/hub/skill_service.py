@@ -114,10 +114,10 @@ If there are multiple possible devices or skills, choose the most relevant and p
 
 class DevicesProxy:
     """Proxy object for accessing skills across all devices.
-    
+
     Used inside python_exec to route skill calls to target devices.
     """
-    
+
     def __init__(
         self,
         db: AsyncSession,
@@ -128,21 +128,19 @@ class DevicesProxy:
         self._user_id = user_id
         self._connection_manager = connection_manager
         self._device_cache: Dict[str, Device] = {}
-    
+
     async def _get_user_devices(self) -> Dict[str, Device]:
         """Get all devices for the current user."""
         if self._device_cache:
             return self._device_cache
-        
+
         result = await self._db.execute(
             select(Device).where(Device.user_id == self._user_id)
         )
         devices = result.scalars().all()
-        self._device_cache = {
-            normalize_device_name(d.name): d for d in devices
-        }
+        self._device_cache = {normalize_device_name(d.name): d for d in devices}
         return self._device_cache
-    
+
     async def search_skills(
         self,
         query: str = "",
@@ -150,7 +148,7 @@ class DevicesProxy:
     ) -> List[Dict[str, Any]]:
         """Search for skills across all devices."""
         devices = await self._get_user_devices()
-        
+
         expiry_time = datetime.now(timezone.utc) - timedelta(
             seconds=settings.skill_expiry_seconds
         )
@@ -160,7 +158,7 @@ class DevicesProxy:
             .where(Skill.last_heartbeat > expiry_time)
         )
         skills = result.scalars().all()
-        
+
         # Filter by query — try all-words first for precision, then
         # fall back to any-word matching if nothing is found.  This keeps
         # "turn on" from matching everything via "on" while still allowing
@@ -170,8 +168,7 @@ class DevicesProxy:
 
             def _matches(s: Skill, mode: str) -> bool:
                 searchable = (
-                    f"{s.function_name} {s.class_name} "
-                    f"{s.docstring or ''}"
+                    f"{s.function_name} {s.class_name} {s.docstring or ''}"
                 ).lower()
                 check = all if mode == "all" else any
                 return check(w in searchable for w in query_words)
@@ -180,21 +177,23 @@ class DevicesProxy:
             if not filtered:
                 filtered = [s for s in skills if _matches(s, "any")]
             skills = filtered
-        
+
         # Group by (class_name, function_name, signature)
         skill_groups: Dict[tuple, Dict] = {}
-        device_id_to_name = {d.id: normalize_device_name(d.name) for d in devices.values()}
-        
+        device_id_to_name = {
+            d.id: normalize_device_name(d.name) for d in devices.values()
+        }
+
         for s in skills:
             key = (s.class_name, s.function_name, s.signature)
             device_name = device_id_to_name.get(s.device_id, "unknown")
-            
+
             if key not in skill_groups:
                 summary = ""
                 if s.docstring:
                     lines = s.docstring.strip().split("\n")
                     summary = lines[0] if lines else ""
-                
+
                 skill_groups[key] = {
                     "path": f"{s.class_name}.{s.function_name}",
                     "signature": s.signature,
@@ -202,13 +201,13 @@ class DevicesProxy:
                     "docstring": s.docstring or "",
                     "devices": [],
                 }
-            
+
             skill_groups[key]["devices"].append(device_name)
-        
+
         # Format results
         results = []
         max_devices = max(1, min(device_limit, 100))
-        
+
         for key, group in sorted(skill_groups.items(), key=lambda x: x[0][0]):
             sorted_devices = sorted(set(group["devices"]))
             device_sample = sorted_devices[:max_devices]
@@ -221,41 +220,43 @@ class DevicesProxy:
                     "summary": group["summary"],
                     "devices": device_sample,
                     "device_count": len(sorted_devices),
-                    # TODO: replace "preferred_device" with instructions to prioritize executing from the current device, 
-                    # and a reminder of "current_device: {current_device_name}" somewhere it won't be 
+                    # TODO: replace "preferred_device" with instructions to prioritize executing from the current device,
+                    # and a reminder of "current_device: {current_device_name}" somewhere it won't be
                     # repeated once per result
-                    "preferred_device": preferred_device, 
+                    "preferred_device": preferred_device,
                     "call_example": (
-                        f"devices.{preferred_device}.{path}(...)" if preferred_device else ""
+                        f"devices.{preferred_device}.{path}(...)"
+                        if preferred_device
+                        else ""
                     ),
                     "python_exec_example": (
-                        f"python_exec(code=\"print(devices.{preferred_device}.{path}(...))\")"
+                        f'python_exec(code="print(devices.{preferred_device}.{path}(...))")'
                         if preferred_device
                         else ""
                     ),
                 }
             )
-        
+
         return results
-    
+
     async def describe_function(self, path: str) -> str:
         """Get full function signature and docstring.
-        
+
         Args:
             path: Function path like "SkillClass.method_name"
         """
         parts = path.split(".")
         if len(parts) < 2:
             return f"Invalid path format: {path}. Use 'SkillClass.method_name'"
-        
+
         class_name = parts[0]
         method_name = parts[1]
-        
+
         devices = await self._get_user_devices()
         expiry_time = datetime.now(timezone.utc) - timedelta(
             seconds=settings.skill_expiry_seconds
         )
-        
+
         result = await self._db.execute(
             select(Skill)
             .where(Skill.device_id.in_([d.id for d in devices.values()]))
@@ -264,15 +265,15 @@ class DevicesProxy:
             .where(Skill.function_name == method_name)
         )
         skill = result.scalars().first()
-        
+
         if not skill:
             return f"Function not found: {path}"
-        
+
         # Format output
         output = f"def {skill.signature}:"
         if skill.docstring:
             output += f'\n    """{skill.docstring}"""'
-        
+
         # Add device info
         result = await self._db.execute(
             select(Skill)
@@ -282,18 +283,20 @@ class DevicesProxy:
             .where(Skill.function_name == method_name)
         )
         all_instances = result.scalars().all()
-        device_id_to_name = {d.id: normalize_device_name(d.name) for d in devices.values()}
-        device_names = sorted(set(
-            device_id_to_name.get(s.device_id, "unknown") for s in all_instances
-        ))
-        
+        device_id_to_name = {
+            d.id: normalize_device_name(d.name) for d in devices.values()
+        }
+        device_names = sorted(
+            set(device_id_to_name.get(s.device_id, "unknown") for s in all_instances)
+        )
+
         if device_names:
             output += f"\n\n# Available on: {', '.join(device_names[:5])}"
             if len(device_names) > 5:
                 output += f" (+{len(device_names) - 5} more)"
-        
+
         return output
-    
+
     async def execute_skill(
         self,
         device_name: str,
@@ -305,17 +308,17 @@ class DevicesProxy:
         """Execute a skill on a specific device via WebSocket."""
         devices = await self._get_user_devices()
         normalized = normalize_device_name(device_name)
-        
+
         device = devices.get(normalized)
         if not device:
             available = ", ".join(sorted(devices.keys()))
             raise ValueError(
                 f"Device '{device_name}' not found. Available devices: {available or '(none)'}"
             )
-        
+
         if not self._connection_manager.is_connected(device.id):
             raise ValueError(f"Device '{device_name}' is not currently connected")
-        
+
         try:
             result = await self._connection_manager.send_skill_request(
                 device_id=device.id,
@@ -330,7 +333,7 @@ class DevicesProxy:
             raise TimeoutError(f"Device '{device_name}' did not respond in time")
         except RuntimeError as e:
             raise RuntimeError(f"Skill execution error: {e}")
-    
+
     def __getattr__(self, device_name: str) -> "DeviceProxy":
         """Get a proxy for a specific device."""
         return DeviceProxy(self, device_name)
@@ -338,11 +341,11 @@ class DevicesProxy:
 
 class DeviceProxy:
     """Proxy for a specific device, providing access to its skills."""
-    
+
     def __init__(self, devices_proxy: DevicesProxy, device_name: str):
         self._devices_proxy = devices_proxy
         self._device_name = device_name
-    
+
     def __getattr__(self, skill_name: str) -> "SkillProxy":
         """Get a proxy for a specific skill on this device."""
         return SkillProxy(self._devices_proxy, self._device_name, skill_name)
@@ -350,7 +353,7 @@ class DeviceProxy:
 
 class SkillProxy:
     """Proxy for a specific skill on a specific device."""
-    
+
     def __init__(
         self,
         devices_proxy: DevicesProxy,
@@ -360,7 +363,7 @@ class SkillProxy:
         self._devices_proxy = devices_proxy
         self._device_name = device_name
         self._skill_name = skill_name
-    
+
     def __getattr__(self, method_name: str) -> "MethodProxy":
         """Get a proxy for a specific method."""
         return MethodProxy(
@@ -373,7 +376,7 @@ class SkillProxy:
 
 class MethodProxy:
     """Proxy for a specific method on a skill."""
-    
+
     def __init__(
         self,
         devices_proxy: DevicesProxy,
@@ -385,7 +388,7 @@ class MethodProxy:
         self._device_name = device_name
         self._skill_name = skill_name
         self._method_name = method_name
-    
+
     async def __call__(self, *args, **kwargs) -> Any:
         """Execute the skill method."""
         return await self._devices_proxy.execute_skill(
@@ -399,10 +402,10 @@ class MethodProxy:
 
 class HubSkillService:
     """Service for executing tools on the Hub.
-    
+
     Provides search_skills, describe_function, and python_exec.
     """
-    
+
     def __init__(
         self,
         db: AsyncSession,
@@ -413,7 +416,7 @@ class HubSkillService:
         self.user_id = user_id
         self.connection_manager = connection_manager
         self._devices_proxy: Optional[DevicesProxy] = None
-    
+
     @property
     def devices(self) -> DevicesProxy:
         """Get the devices proxy for skill access."""
@@ -424,18 +427,18 @@ class HubSkillService:
                 connection_manager=self.connection_manager,
             )
         return self._devices_proxy
-    
+
     async def execute_tool(
         self,
         tool_name: str,
         arguments: Dict[str, Any],
     ) -> Dict[str, Any]:
         """Execute a tool call.
-        
+
         Args:
             tool_name: Name of the tool (search_skills, describe_function, python_exec)
             arguments: Tool arguments
-        
+
         Returns:
             Dict with "result" or "error" key
         """
@@ -445,12 +448,12 @@ class HubSkillService:
                 device_limit = int(arguments.get("device_limit", 10) or 10)
                 results = await self.devices.search_skills(query, device_limit)
                 return {"result": json.dumps(results, indent=2)}
-            
+
             elif tool_name == "describe_function":
                 path = arguments.get("path", "")
                 result = await self.devices.describe_function(path)
                 return {"result": result}
-            
+
             elif tool_name == "python_exec":
                 code = arguments.get("code", "")
                 result = await self._execute_python(code)
@@ -462,7 +465,7 @@ class HubSkillService:
                 # (e.g., `get_current_weather(...)`). When that happens, we attempt to
                 # map the tool name to a registered Skill row and route it via WebSocket.
                 return await self._execute_dynamic_skill_tool(tool_name, arguments)
-        
+
         except Exception as e:
             logger.error(f"Tool execution error: {e}")
             return {"error": f"{type(e).__name__}: {e}\n{traceback.format_exc()}"}
@@ -568,7 +571,7 @@ class HubSkillService:
                 e,
             )
             return {"error": f"{type(e).__name__}: {e}"}
-    
+
     async def _execute_python(self, code: str) -> Dict[str, Any]:
         """Execute Python code with access to devices proxy using asteval.
 
@@ -585,7 +588,7 @@ class HubSkillService:
         from .asteval_executor import execute_with_asteval
 
         return await execute_with_asteval(code, self.devices)
-    
+
     async def get_system_prompt(self, requesting_device_key: str) -> str:
         """Get the system prompt for online mode.
 

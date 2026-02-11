@@ -121,7 +121,9 @@ frontend_dir = Path(__file__).parent.parent.parent / "frontend" / "dist"
 if frontend_dir.exists():
     from fastapi.responses import FileResponse
     from fastapi.staticfiles import StaticFiles
+
     app.mount("/assets", StaticFiles(directory=frontend_dir / "assets"), name="assets")
+
 
 @app.get("/api/health")
 async def root():
@@ -142,6 +144,7 @@ async def health():
 # Serve SPA - catch all other routes
 # Must be defined LAST locally to avoid shadowing other routes
 if os.path.exists(frontend_dir):
+
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
         # Allow API calls to pass through (if they weren't caught by routers above)
@@ -168,4 +171,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

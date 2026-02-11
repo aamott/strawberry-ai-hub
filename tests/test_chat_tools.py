@@ -1,9 +1,9 @@
 """Integration tests for Hub chat with tool execution."""
 
 import os
+from unittest.mock import MagicMock, patch
 
 import pytest
-from unittest.mock import MagicMock, patch
 
 
 # Mock TensorZero response for testing
@@ -49,35 +49,35 @@ async def test_chat_with_tools_search_skills(auth_client):
             ]
         },
     )
-    
+
     # Send heartbeat to keep skill alive
     await auth_client.post("/skills/heartbeat")
-    
+
     # Mock TensorZero to simulate tool call
     async def mock_inference(messages, function_name, system=None, **kwargs):
         # First call: LLM decides to search for skills (1 user message)
         if len(messages) == 1:
             return MockTensorZeroResponse(
                 content_text="",
-                tool_calls=[{"name": "search_skills", "arguments": {"query": "calculator"}}]
+                tool_calls=[
+                    {"name": "search_skills", "arguments": {"query": "calculator"}}
+                ],
             )
         # Second call: LLM responds with the search results
         else:
             return MockTensorZeroResponse(content_text="Found the calculator skill!")
-    
+
     with patch("hub.routers.chat.tz_inference", side_effect=mock_inference):
         # Call chat with tools enabled
         response = await auth_client.post(
             "/api/v1/chat/completions",
             json={
                 "model": "gpt-4o-mini",
-                "messages": [
-                    {"role": "user", "content": "Search for calculator skills"}
-                ],
+                "messages": [{"role": "user", "content": "Search for calculator skills"}],
                 "enable_tools": True,
             },
         )
-        
+
         # Should get a response with tool execution log
         assert response.status_code == 200
         data = response.json()
@@ -90,7 +90,7 @@ async def test_chat_with_tools_search_skills(auth_client):
 @pytest.mark.asyncio
 async def test_chat_with_tools_calculator_skill(auth_client, monkeypatch):
     """Test chat endpoint can execute calculator skill through Hub.
-    
+
     This test mocks the WebSocket connection manager since we don't have
     a real Spoke connected in tests.
     """
@@ -114,19 +114,21 @@ async def test_chat_with_tools_calculator_skill(auth_client, monkeypatch):
             ]
         },
     )
-    
+
     # Send heartbeat
     await auth_client.post("/skills/heartbeat")
-    
+
     # Mock the WebSocket connection manager
     from hub.routers.websocket import connection_manager
-    
+
     # Mock device connection check
     original_is_connected = connection_manager.is_connected
     connection_manager.is_connected = MagicMock(return_value=True)
-    
+
     # Mock skill execution to return a result
-    async def mock_send_skill_request(device_id, skill_name, method_name, args, kwargs, timeout):
+    async def mock_send_skill_request(
+        device_id, skill_name, method_name, args, kwargs, timeout
+    ):
         """Mock skill execution."""
         if skill_name == "CalculatorSkill" and method_name == "add":
             a = args[0] if args else kwargs.get("a", 0)
@@ -137,11 +139,12 @@ async def test_chat_with_tools_calculator_skill(auth_client, monkeypatch):
             b = args[1] if len(args) > 1 else kwargs.get("b", 1)
             return a * b
         return 0
-    
+
     original_send_skill_request = connection_manager.send_skill_request
     connection_manager.send_skill_request = mock_send_skill_request
-    
+
     try:
+
         async def mock_inference(messages, function_name, system=None, **kwargs):
             # First call: request tool execution via python_exec (1 user message)
             if len(messages) == 1:
@@ -175,16 +178,16 @@ async def test_chat_with_tools_calculator_skill(auth_client, monkeypatch):
                     "enable_tools": True,
                 },
             )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert "choices" in data
         assert len(data["choices"]) > 0
-        
+
         # Check that we got a response (the actual content will depend on the LLM)
         content = data["choices"][0]["message"]["content"]
         assert content is not None
-        
+
     finally:
         # Restore original methods
         connection_manager.is_connected = original_is_connected
@@ -219,7 +222,9 @@ async def test_chat_with_tools_dynamic_skill_method_called_as_tool(auth_client):
     original_send_skill_request = connection_manager.send_skill_request
     connection_manager.is_connected = MagicMock(return_value=True)
 
-    async def mock_send_skill_request(device_id, skill_name, method_name, args, kwargs, timeout):
+    async def mock_send_skill_request(
+        device_id, skill_name, method_name, args, kwargs, timeout
+    ):
         assert skill_name == "CalculatorSkill"
         assert method_name == "add"
         return int(kwargs.get("a")) + int(kwargs.get("b"))
@@ -227,6 +232,7 @@ async def test_chat_with_tools_dynamic_skill_method_called_as_tool(auth_client):
     connection_manager.send_skill_request = mock_send_skill_request
 
     try:
+
         async def mock_inference(messages, function_name, system=None, **kwargs):
             # First call: model incorrectly calls skill method as tool
             if len(messages) == 1:
@@ -315,13 +321,11 @@ async def test_chat_without_tools(auth_client):
             "/api/v1/chat/completions",
             json={
                 "model": "gpt-4o-mini",
-                "messages": [
-                    {"role": "user", "content": "Hello, how are you?"}
-                ],
+                "messages": [{"role": "user", "content": "Hello, how are you?"}],
                 "enable_tools": False,
             },
         )
-    
+
     assert response.status_code == 200
     data = response.json()
     assert "choices" in data
@@ -367,7 +371,9 @@ async def test_live_llm_tool_search_and_calculator_exec(auth_client):
     original_send_skill_request = connection_manager.send_skill_request
     connection_manager.is_connected = MagicMock(return_value=True)
 
-    async def mock_send_skill_request(device_id, skill_name, method_name, args, kwargs, timeout):
+    async def mock_send_skill_request(
+        device_id, skill_name, method_name, args, kwargs, timeout
+    ):
         if skill_name == "CalculatorSkill" and method_name == "add":
             return int(kwargs.get("a")) + int(kwargs.get("b"))
         raise RuntimeError(f"Unexpected call: {skill_name}.{method_name}")
@@ -396,7 +402,9 @@ async def test_live_llm_tool_search_and_calculator_exec(auth_client):
         if response.status_code == 502:
             error_text = response.text or ""
             if "API_KEY_INVALID" in error_text or "API key not valid" in error_text:
-                pytest.fail("Live LLM API key is invalid; update GOOGLE_AI_STUDIO_API_KEY")
+                pytest.fail(
+                    "Live LLM API key is invalid; update GOOGLE_AI_STUDIO_API_KEY"
+                )
 
         assert response.status_code == 200, response.text
         data = response.json()

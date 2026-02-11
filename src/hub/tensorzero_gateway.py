@@ -49,7 +49,8 @@ async def get_gateway() -> AsyncTensorZeroGateway:
 
     if AsyncTensorZeroGateway is None:
         raise RuntimeError(
-            "TensorZero is not installed. Install the 'tensorzero' package to enable Hub chat."
+            "TensorZero is not installed. Install the"
+            " 'tensorzero' package to enable Hub chat."
         )
 
     if _gateway is not None and _gateway_initialized:

@@ -48,8 +48,9 @@ class SyncMethodProxy:
     def __call__(self, *args, **kwargs) -> Any:
         """Execute the async method synchronously."""
         logger.debug(
-            f"[SyncProxy] Calling {self._device_name}.{self._skill_name}.{self._method_name}"
-            f"({args}, {kwargs})"
+            "[SyncProxy] Calling %s.%s.%s(%s, %s)",
+            self._device_name, self._skill_name,
+            self._method_name, args, kwargs,
         )
         try:
             # Schedule the coroutine on the event loop and wait for result
@@ -62,7 +63,8 @@ class SyncMethodProxy:
             return result
         except TimeoutError:
             raise TimeoutError(
-                f"Skill call timed out: {self._device_name}.{self._skill_name}.{self._method_name}"
+                f"Skill call timed out: {self._device_name}"
+                f".{self._skill_name}.{self._method_name}"
             )
         except Exception as e:
             logger.error(f"[SyncProxy] Error: {e}")

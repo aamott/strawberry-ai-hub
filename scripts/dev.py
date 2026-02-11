@@ -72,7 +72,8 @@ def run_server(host: str, port: int, reload: bool = False) -> int:
         if sys.platform == "win32":
             os.environ.setdefault("WATCHFILES_FORCE_POLLING", "true")
             print(
-                "Note: On Windows, --reload may hang. Use Ctrl+C twice or restart manually."
+                "Note: On Windows, --reload may hang."
+                " Use Ctrl+C twice or restart manually."
             )
 
     print(f"Starting Hub server on http://{host}:{port}")

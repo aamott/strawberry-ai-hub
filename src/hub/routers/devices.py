@@ -99,7 +99,11 @@ async def create_device_token(
     hub_url = f"http://{settings.host}:{settings.port}"
 
     # Command supporting the new Spoke loader
-    command = f"export STRAWBERRY_HUB_URL={hub_url} STRAWBERRY_DEVICE_TOKEN={access_token} && python -m strawberry.main"
+    command = (
+        f"export STRAWBERRY_HUB_URL={hub_url}"
+        f" STRAWBERRY_DEVICE_TOKEN={access_token}"
+        " && python -m strawberry.main"
+    )
 
     return {"device": device, "token": access_token, "command": command}
 

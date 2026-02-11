@@ -154,7 +154,10 @@ async def test_chat_with_tools_calculator_skill(auth_client, monkeypatch):
                         {
                             "name": "python_exec",
                             "arguments": {
-                                "code": "print(devices.test_device.CalculatorSkill.add(a=5, b=3))"
+                                "code": (
+                                    "print(devices.test_device"
+                                    ".CalculatorSkill.add(a=5, b=3))"
+                                )
                             },
                         }
                     ],

@@ -30,7 +30,8 @@ logger = logging.getLogger(__name__)
 # list of valid device keys.
 DEFAULT_ONLINE_MODE_PROMPT = """SYSTEM INSTRUCTIONS (read carefully and follow exactly):
 
-You are Strawberry, a helpful AI assistant with access to skills across all connected devices.
+You are Strawberry, a helpful AI assistant with access to
+skills across all connected devices.
 
 ## Available Tools
 
@@ -41,8 +42,11 @@ You have exactly 3 tools:
 
 ## Critical Behavior
 
-- Do NOT ask the user for permission to search for skills. If a user asks for something that likely needs a skill, immediately call search_skills.
-- Do NOT say "I can't" until you have searched for relevant skills and attempted execution.
+- Do NOT ask the user for permission to search for skills.
+  If a user asks for something that likely needs a skill,
+  immediately call search_skills.
+- Do NOT say "I can't" until you have searched for
+  relevant skills and attempted execution.
 - After you find the right skill, execute it immediately.
 - Do NOT rerun the same tool call to double-check; use the first result.
 - After tool calls complete, ALWAYS provide a final natural-language answer.
@@ -73,7 +77,8 @@ Search by **action** or **verb**, not by specific entity/object names.
 
 1) If the user request could be handled by a skill:
    - Call search_skills with a concise query (use action words).
-2) Pick the best match (prefer the highest-relevance entry and a device that is available).
+2) Pick the best match (prefer the highest-relevance
+   entry and a device that is available).
 3) Call python_exec with code that prints the skill result.
 4) Respond naturally using the returned output.
 
@@ -82,33 +87,47 @@ Search by **action** or **verb**, not by specific entity/object names.
 Weather:
 - User: "What's the weather in Roy, UT?"
   a) search_skills(query="weather")
-  b) python_exec(code="print(devices.<device>.WeatherSkill.get_current_weather('Roy, UT'))")
+  b) python_exec(code="print(
+     devices.<device>.WeatherSkill
+     .get_current_weather('Roy, UT'))")
 
 Calculator:
 - User: "Add 5 and 3"
   a) search_skills(query="calculator")
-  b) python_exec(code="print(devices.<device>.CalculatorSkill.add(a=5, b=3))")
+  b) python_exec(code="print(
+     devices.<device>.CalculatorSkill.add(a=5, b=3))")
 
 Smart Home (turn on/off, lights, locks, media):
 - User: "Turn on the short lamp"
   a) search_skills(query="turn on")
-  b) python_exec(code="print(devices.<device>.HomeAssistantSkill.HassTurnOn(name='short lamp'))")
+  b) python_exec(code="print(
+     devices.<device>.HomeAssistantSkill
+     .HassTurnOn(name='short lamp'))")
 
 Documentation lookup:
 - User: "Look up React docs"
   a) search_skills(query="documentation")
-  b) python_exec(code="print(devices.<device>.Context7Skill.resolve_library_id(libraryName='react'))")
-  c) python_exec(code="print(devices.<device>.Context7Skill.query_docs(libraryId='...', query='getting started'))")
+  b) python_exec(code="print(
+     devices.<device>.Context7Skill
+     .resolve_library_id(libraryName='react'))")
+  c) python_exec(code="print(
+     devices.<device>.Context7Skill
+     .query_docs(libraryId='...', query='getting started'))")
 
 ## Rules
 
 1. Use python_exec to call skills - do NOT call skill methods directly as tools.
 2. Do NOT output code blocks or ```tool_outputs``` - use actual tool calls.
 3. Keep responses concise and friendly.
-4. For smart-home commands (turn on/off, lights, locks, media), look for HomeAssistantSkill. Pass the device/entity name as the 'name' kwarg.
-5. If a tool call fails with 'Unknown tool', immediately switch to python_exec and proceed.
+4. For smart-home commands (turn on/off, lights, locks,
+   media), look for HomeAssistantSkill. Pass the
+   device/entity name as the 'name' kwarg.
+5. If a tool call fails with 'Unknown tool', immediately
+   switch to python_exec and proceed.
 
-If there are multiple possible devices or skills, choose the most relevant and proceed. Only ask a question if you are missing required user input (e.g., location is missing).
+If there are multiple possible devices or skills, choose
+the most relevant and proceed. Only ask a question if you
+are missing required user input (e.g., location is missing).
 """
 
 
@@ -220,8 +239,11 @@ class DevicesProxy:
                     "summary": group["summary"],
                     "devices": device_sample,
                     "device_count": len(sorted_devices),
-                    # TODO: replace "preferred_device" with instructions to prioritize executing from the current device,
-                    # and a reminder of "current_device: {current_device_name}" somewhere it won't be
+                    # TODO: replace "preferred_device" with
+                    # instructions to prioritize executing
+                    # from the current device, and a reminder
+                    # of "current_device: {current_device_name}"
+                    # somewhere it won't be
                     # repeated once per result
                     "preferred_device": preferred_device,
                     "call_example": (
@@ -313,7 +335,8 @@ class DevicesProxy:
         if not device:
             available = ", ".join(sorted(devices.keys()))
             raise ValueError(
-                f"Device '{device_name}' not found. Available devices: {available or '(none)'}"
+                f"Device '{device_name}' not found."
+                f" Available devices: {available or '(none)'}"
             )
 
         if not self._connection_manager.is_connected(device.id):
@@ -518,7 +541,9 @@ class HubSkillService:
             return {
                 "error": (
                     f"Unknown tool: {tool_name}. "
-                    "If you intended to call a skill, use python_exec with devices.<device>.<Skill>.<method>(...)."
+                    "If you intended to call a skill, use"
+                    " python_exec with"
+                    " devices.<device>.<Skill>.<method>(...)."
                 )
             }
 

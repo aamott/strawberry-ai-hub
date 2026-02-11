@@ -198,7 +198,8 @@ async def get_current_device(
         else:
             # Update last seen
             device.last_seen = datetime.now(timezone.utc)
-            # await db.commit() # Not strictly necessary every time, but keeps last_seen fresh
+            # await db.commit()  # Not strictly necessary every
+            # time, but keeps last_seen fresh
 
         return device
 

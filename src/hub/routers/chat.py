@@ -26,7 +26,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth import get_current_device
 from ..config import settings
 from ..database import Device, get_db
-from ..tensorzero_gateway import inference as tz_inference, inference_stream as tz_inference_stream
+from ..tensorzero_gateway import inference as tz_inference
+from ..tensorzero_gateway import inference_stream as tz_inference_stream
 from ..utils import normalize_device_name
 
 logger = logging.getLogger(__name__)
@@ -279,6 +280,180 @@ async def _stream_chat_completions(
         yield _sse({"type": "error", "error": str(e)})
 
 
+def _classify_block_type(block: Any) -> str:
+    """Return a string label for a content block's type."""
+    if hasattr(block, "type"):
+        return str(getattr(block, "type") or "unknown")
+    if isinstance(block, dict):
+        return str(block.get("type") or "unknown")
+    return type(block).__name__
+
+
+def _parse_response_blocks(
+    response: Any,
+    iteration: int = 0,
+) -> tuple[str, list[dict[str, Any]], str]:
+    """Extract text, tool calls, and model from a response.
+
+    Logs a warning when both text and tool calls are empty.
+
+    Returns:
+        Tuple of (content, tool_calls, model_used).
+    """
+    blocks = _get_content_blocks(response)
+    block_types = [_classify_block_type(b) for b in blocks]
+
+    content = ""
+    tool_calls: list[dict[str, Any]] = []
+    for block in blocks:
+        content += _extract_text_from_block(block)
+        tc = _extract_tool_call_from_block(block)
+        if tc and tc.get("name"):
+            tool_calls.append(tc)
+
+    model_used = _extract_model(response)
+
+    if not content.strip() and not tool_calls:
+        logger.warning(
+            "[Agent Loop] Empty model step."
+            " variant=%s iteration=%s blocks=%s",
+            model_used, iteration, block_types,
+        )
+
+    return content, tool_calls, model_used
+
+
+async def _execute_single_tool(
+    tc: dict[str, Any],
+    skill_service: Any,
+    seen_keys: set[str],
+    repeated: dict[str, int],
+    iteration: int,
+) -> tuple[dict[str, Any], bool]:
+    """Execute one tool call, handling duplicates and repeats.
+
+    Returns:
+        Tuple of (result dict, was_executed).
+    """
+    execution_key = (
+        f"{tc['name']}:"
+        f"{json.dumps(tc['arguments'] or {}, sort_keys=True, default=str)}"
+    )
+
+    if execution_key in seen_keys:
+        logger.warning(
+            "[Agent Loop] Duplicate tool call in single response; skipping."
+            " tool=%s args=%s",
+            tc.get("name"),
+            tc.get("arguments"),
+        )
+        return {"result": "(duplicate tool call skipped)"}, False
+
+    seen_keys.add(execution_key)
+    repeated[execution_key] = repeated.get(execution_key, 0) + 1
+    if repeated[execution_key] > 1:
+        logger.warning(
+            "[Agent Loop] Tool call repeated across iterations."
+            " iteration=%s count=%s tool=%s args=%s",
+            iteration,
+            repeated[execution_key],
+            tc.get("name"),
+            tc.get("arguments"),
+        )
+    result = await skill_service.execute_tool(tc["name"], tc["arguments"])
+    return result, True
+
+
+def _format_tool_result(
+    result: dict[str, Any],
+) -> tuple[bool, Optional[str], Optional[str]]:
+    """Normalise a tool result into (success, result_str, error_str)."""
+    success = "result" in result
+    result_str = str(result.get("result", "")) if success else None
+    error_str = str(result.get("error", "")) if not success else None
+
+    if success and (result_str is None or not result_str.strip()):
+        result_str = "(no output)"
+    if (not success) and (error_str is None or not error_str.strip()):
+        error_str = "(unknown error)"
+    return success, result_str, error_str
+
+
+async def _execute_tool_calls(
+    tool_calls: list[dict[str, Any]],
+    skill_service: Any,
+    seen_keys: set[str],
+    repeated: dict[str, int],
+    iteration: int,
+) -> AsyncIterator[dict[str, Any]]:
+    """Execute a batch of tool calls, yielding SSE events.
+
+    Yields ``tool_call_started`` and ``tool_call_result`` events, then
+    a final internal ``_tool_summary`` pseudo-event with ``results``
+    (list[str]) and ``had_execution`` (bool) keys.
+    """
+    tool_results: list[str] = []
+    had_execution = False
+
+    for tc in tool_calls:
+        tool_call_id = str(tc.get("id") or "")
+        yield {
+            "type": "tool_call_started",
+            "tool_call_id": tool_call_id,
+            "tool_name": tc.get("name") or "",
+            "arguments": tc.get("arguments") or {},
+        }
+
+        result, was_executed = await _execute_single_tool(
+            tc, skill_service, seen_keys, repeated, iteration,
+        )
+        if was_executed:
+            had_execution = True
+
+        success, result_str, error_str = _format_tool_result(result)
+
+        yield {
+            "type": "tool_call_result",
+            "tool_call_id": tool_call_id,
+            "tool_name": tc.get("name") or "",
+            "success": success,
+            "result": result_str,
+            "error": error_str,
+        }
+
+        label = tc["name"]
+        if success:
+            tool_results.append(f"Tool {label}: {result_str}")
+        else:
+            tool_results.append(f"Tool {label} error: {error_str}")
+
+    yield {
+        "type": "_tool_summary",
+        "results": tool_results,
+        "had_execution": had_execution,
+    }
+
+
+def _should_retry_empty_text(
+    had_tool_execution: bool,
+    content: str,
+    already_retried: bool,
+) -> bool:
+    """Check if we should nudge the LLM for a text response."""
+    return (
+        had_tool_execution
+        and not content.strip()
+        and not already_retried
+    )
+
+
+_EMPTY_TEXT_NUDGE = (
+    "[System Note] The previous response contained no text. "
+    "Do NOT call tools again. Respond now in natural language "
+    "using the tool results above."
+)
+
+
 async def _agent_loop_events(
     request: ChatCompletionRequest,
     device: Device,
@@ -290,8 +465,8 @@ async def _agent_loop_events(
     - streaming SSE responses
     - classic JSON responses (non-streaming)
     """
-    from .websocket import connection_manager
     from ..skill_service import HubSkillService
+    from .websocket import connection_manager
 
     skill_service = HubSkillService(
         db=db,
@@ -301,9 +476,13 @@ async def _agent_loop_events(
 
     messages: List[Dict[str, Any]] = []
     system_prompt = await skill_service.get_system_prompt(
-        requesting_device_key=normalize_device_name(device.name or "")
+        requesting_device_key=normalize_device_name(
+            device.name or ""
+        )
     )
-    messages.extend(_normalize_messages(request.messages, include_tool_call_id=False))
+    messages.extend(
+        _normalize_messages(request.messages, include_tool_call_id=False)
+    )
     max_iterations = settings.agent_max_iterations
 
     final_content = ""
@@ -313,155 +492,67 @@ async def _agent_loop_events(
     repeated_across_iterations: dict[str, int] = {}
 
     for iteration in range(max_iterations):
-        _ = iteration
         response = await tz_inference(
             messages=messages,
             function_name="chat",
             system=system_prompt,
         )
 
-        content = ""
-        tool_calls: list[dict[str, Any]] = []
+        content, tool_calls, model_used = (
+            _parse_response_blocks(response, iteration=iteration)
+        )
 
-        blocks = _get_content_blocks(response)
-        block_types: list[str] = []
-        for block in blocks:
-            if hasattr(block, "type"):
-                block_types.append(str(getattr(block, "type") or "unknown"))
-            elif isinstance(block, dict):
-                block_types.append(str(block.get("type") or "unknown"))
-            else:
-                block_types.append(type(block).__name__)
-
-        for block in blocks:
-            content += _extract_text_from_block(block)
-            tc = _extract_tool_call_from_block(block)
-            if tc and tc.get("name"):
-                tool_calls.append(tc)
-
-        model_used = _extract_model(response)
-
-        if not content.strip() and not tool_calls:
-            logger.warning(
-                "[Agent Loop] Empty model step. variant=%s iteration=%s blocks=%s",
-                model_used,
-                iteration,
-                block_types,
-            )
-
+        # No tool calls → final text response (or empty-text retry).
         if not tool_calls:
-            if had_any_tool_execution and not content.strip() and not did_empty_text_retry:
-                # Some providers occasionally return no text content blocks after tool results.
-                # Nudge once to request a natural-language response.
+            if _should_retry_empty_text(
+                had_any_tool_execution, content, did_empty_text_retry
+            ):
                 did_empty_text_retry = True
                 messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            "[System Note] The previous response contained no text. "
-                            "Do NOT call tools again. Respond now in natural language using the tool results above."
-                        ),
-                    }
+                    {"role": "user", "content": _EMPTY_TEXT_NUDGE}
                 )
                 continue
 
-            # Final response — try to stream it token-by-token.
-            # We already have `content` from the non-streaming call above.
-            # Re-running with streaming would waste an LLM call, so we
-            # emit the already-collected content as a series of word-level
-            # deltas for a smooth UI experience.
             if content.strip():
                 for delta in _split_into_deltas(content):
                     yield {"type": "content_delta", "delta": delta}
-
             final_content = content
             break
 
-        # Execute tool calls.
-        tool_results: list[str] = []
-        seen_execution_keys: set[str] = set()
-
-        for tc in tool_calls:
-            tool_call_id = str(tc.get("id") or "")
-            yield {
-                "type": "tool_call_started",
-                "tool_call_id": tool_call_id,
-                "tool_name": tc.get("name") or "",
-                "arguments": tc.get("arguments") or {},
-            }
-
-            execution_key = f"{tc['name']}:{json.dumps(tc['arguments'] or {}, sort_keys=True, default=str)}"
-            if execution_key in seen_execution_keys:
-                logger.warning(
-                    "[Agent Loop] Duplicate tool call in single response; skipping. tool=%s args=%s",
-                    tc.get("name"),
-                    tc.get("arguments"),
-                )
-                result = {"result": "(duplicate tool call skipped)"}
+        # Execute tool calls via helper generator.
+        seen_keys: set[str] = set()
+        async for event in _execute_tool_calls(
+            tool_calls, skill_service, seen_keys,
+            repeated_across_iterations, iteration,
+        ):
+            if event["type"] == "_tool_summary":
+                tool_results = event["results"]
+                if event["had_execution"]:
+                    had_any_tool_execution = True
             else:
-                seen_execution_keys.add(execution_key)
-                repeated_across_iterations[execution_key] = (
-                    repeated_across_iterations.get(execution_key, 0) + 1
-                )
-                if repeated_across_iterations[execution_key] > 1:
-                    logger.warning(
-                        "[Agent Loop] Tool call repeated across iterations. iteration=%s count=%s tool=%s args=%s",
-                        iteration,
-                        repeated_across_iterations[execution_key],
-                        tc.get("name"),
-                        tc.get("arguments"),
-                    )
-                result = await skill_service.execute_tool(tc["name"], tc["arguments"])
-                had_any_tool_execution = True
-
-            success = "result" in result
-            result_str = str(result.get("result", "")) if success else None
-            error_str = str(result.get("error", "")) if not success else None
-
-            if success and (result_str is None or not result_str.strip()):
-                # Many tools (notably python_exec) succeed but produce no stdout.
-                # If we propagate an empty string, models often repeat the same call
-                # indefinitely. Make the empty output explicit.
-                result_str = "(no output)"
-            if (not success) and (error_str is None or not error_str.strip()):
-                error_str = "(unknown error)"
-
-            yield {
-                "type": "tool_call_result",
-                "tool_call_id": tool_call_id,
-                "tool_name": tc.get("name") or "",
-                "success": success,
-                "result": result_str,
-                "error": error_str,
-            }
-
-            if success:
-                tool_results.append(f"Tool {tc['name']}: {result_str}")
-            else:
-                tool_results.append(f"Tool {tc['name']} error: {error_str}")
+                yield event
 
         messages.append({"role": "assistant", "content": content})
         tool_output = "\n".join(tool_results)
-
-        messages.append(
-            {
-                "role": "user",
-                "content": (
-                    f"[Tool Results]\n{tool_output}\n\n"
-                    "[Now respond naturally to the user based on these results.]"
-                ),
-            }
-        )
+        messages.append({
+            "role": "user",
+            "content": (
+                f"[Tool Results]\n{tool_output}\n\n"
+                "[Now respond naturally to the user"
+                " based on these results.]"
+            ),
+        })
         final_content = content
 
     if not (final_content or "").strip():
         logger.warning(
-            "[Agent Loop] Empty model response after tool execution loop. variant=%s",
+            "[Agent Loop] Empty model response after"
+            " tool execution loop. variant=%s",
             model_used,
         )
         final_content = (
-            "I didn't get a usable response from the model (empty content blocks). "
-            "Please try again."
+            "I didn't get a usable response from the model"
+            " (empty content blocks). Please try again."
         )
 
     yield {
@@ -539,10 +630,10 @@ async def _call_tensorzero(
     # tool-calling flows can introduce roles like `system` and `tool`, so we
     # normalize those into `user` messages while preserving order.
     messages = _normalize_messages(request.messages, include_tool_call_id=True)
-    
+
     # Choose function based on whether tools are enabled
     function_name = "chat" if use_tools else "chat_no_tools"
-    
+
     try:
         response = await tz_inference(
             messages=messages,
@@ -553,7 +644,7 @@ async def _call_tensorzero(
             status_code=502,
             detail=f"LLM inference failed: {e}",
         )
-    
+
     # Extract content from TensorZero response
     content = _extract_content(response)
     if not (content or "").strip():
@@ -566,7 +657,7 @@ async def _call_tensorzero(
             ),
         )
     model_used = _extract_model(response)
-    
+
     return ChatCompletionResponse(
         id=f"chatcmpl-{uuid.uuid4().hex[:8]}",
         created=int(time.time()),

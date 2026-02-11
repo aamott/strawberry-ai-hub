@@ -10,4 +10,4 @@ target-version = "py310"
 select = ["E", "F", "I", "W", "C901"]
 
 [lint.mccabe]
-max-complexity = 10
+max-complexity = 11

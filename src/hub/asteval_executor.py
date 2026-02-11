@@ -49,8 +49,11 @@ class SyncMethodProxy:
         """Execute the async method synchronously."""
         logger.debug(
             "[SyncProxy] Calling %s.%s.%s(%s, %s)",
-            self._device_name, self._skill_name,
-            self._method_name, args, kwargs,
+            self._device_name,
+            self._skill_name,
+            self._method_name,
+            args,
+            kwargs,
         )
         try:
             # Schedule the coroutine on the event loop and wait for result

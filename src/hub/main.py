@@ -6,27 +6,27 @@ import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-import uvicorn
 
 from .config import HUB_ROOT, settings
 from .database import dispose_engine, init_db
 from .logging_config import configure_logging
-from .tensorzero_gateway import get_gateway, shutdown_gateway
+from .protocol import ProtocolVersionMiddleware
 from .routers import (
+    admin_router,
     auth_router,
     chat_router,
-    skills_router,
-    devices_router,
     device_discovery_router,
+    devices_router,
     sessions_router,
+    skills_router,
     websocket_router,
-    admin_router,
 )
 from .routers.websocket import connection_manager
-
+from .tensorzero_gateway import get_gateway, shutdown_gateway
 
 logger = logging.getLogger(__name__)
 
@@ -54,25 +54,25 @@ async def lifespan(app: FastAPI):
         logger.info("Initializing TensorZero gateway...")
         await get_gateway()
         logger.info("Hub ready!")
-    
+
     yield
-    
+
     # Shutdown - close all resources to ensure clean exit
     if "pytest" not in sys.modules:
         logger.info("Shutting down...")
-    
+
     # Shutdown TensorZero gateway
     try:
         await shutdown_gateway()
     except Exception:
         pass
-    
+
     # Close WebSocket connections and cancel pending requests
     try:
         await connection_manager.shutdown()
     except Exception:
         pass
-    
+
     # Dispose database engine
     try:
         await dispose_engine()
@@ -87,6 +87,9 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# Protocol version middleware — reject unsupported Spoke protocol versions
+app.add_middleware(ProtocolVersionMiddleware)
 
 # CORS middleware (allow all for development)
 app.add_middleware(
@@ -116,8 +119,8 @@ app.include_router(admin_router)
 frontend_dir = Path(__file__).parent.parent.parent / "frontend" / "dist"
 
 if frontend_dir.exists():
-    from fastapi.staticfiles import StaticFiles
     from fastapi.responses import FileResponse
+    from fastapi.staticfiles import StaticFiles
     app.mount("/assets", StaticFiles(directory=frontend_dir / "assets"), name="assets")
 
 @app.get("/api/health")
@@ -142,9 +145,10 @@ if os.path.exists(frontend_dir):
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
         # Allow API calls to pass through (if they weren't caught by routers above)
-        if full_path.startswith("api") or full_path.startswith("docs") or full_path.startswith("openapi.json"):
-             raise HTTPException(status_code=404)
-        
+        passthrough = ("api", "docs", "openapi.json")
+        if full_path.startswith(passthrough):
+            raise HTTPException(status_code=404)
+
         # Serve index.html for all other routes
         return FileResponse(os.path.join(frontend_dir, "index.html"))
 

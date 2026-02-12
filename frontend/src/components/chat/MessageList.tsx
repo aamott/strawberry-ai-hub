@@ -19,7 +19,7 @@ const styles = {
     emptyStateIcon: "text-2xl",
     emptyStateTitle: "text-lg font-medium text-foreground",
     emptyStateDescription: "max-w-sm mt-2",
-    listContainer: "flex-1 overflow-y-auto p-4 space-y-6",
+    listContainer: "flex-1 overflow-y-auto p-4 space-y-6 max-w-4xl mx-auto w-full",
     loadingContainer: "flex justify-start",
     loadingWrapper: "flex items-center gap-2 text-muted-foreground text-sm pl-12",
     loadingIcon: "h-4 w-4 animate-spin",

@@ -3,9 +3,9 @@ import { api } from "@/lib/api";
 import { ChatSidebar } from "@/components/chat/ChatSidebar";
 import { ChatArea } from "@/components/chat/ChatArea";
 import { useToast } from "@/components/ui/use-toast";
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
-import { Menu } from "lucide-react";
+import { PanelLeft } from "lucide-react";
 import { streamHubChatCompletion, type HubChatMessage } from "@/lib/chatStream";
 
 interface Session {
@@ -69,17 +69,6 @@ function formatToolCallResult(
     return { ui, persist };
 }
 
-const styles = {
-    container: "flex h-full overflow-hidden bg-background",
-    sidebarDesktop: "hidden md:block h-full",
-    mobileHeader: "md:hidden flex items-center p-3 border-b bg-background/95 backdrop-blur z-10",
-    mobileMenuButton: "mr-2",
-    mobileMenuIcon: "h-5 w-5",
-    mobileTitle: "font-semibold text-lg",
-    sheetContent: "p-0 w-80",
-    mainArea: "flex-1 flex flex-col min-w-0 h-full"
-};
-
 export function Chat() {
     const [sessions, setSessions] = useState<Session[]>([]);
     const [activeSessionId, setActiveSessionId] = useState<string | undefined>();
@@ -129,7 +118,7 @@ export function Chat() {
             const newSession = res.data;
             setSessions((prev) => [newSession, ...prev]);
             setActiveSessionId(newSession.id);
-            setSidebarOpen(false); // Close mobile sidebar on selection
+            setSidebarOpen(false);
         } catch (error) {
             console.error("Failed to create new chat", error);
             toast({
@@ -163,14 +152,12 @@ export function Chat() {
 
     const handleDeleteSessions = useCallback(async (ids: string[]) => {
         try {
-            // Delete sequentially to avoid spiking the backend.
             for (const id of ids) {
                 await api.delete(`/sessions/${id}`);
             }
 
             toast({ title: "Chats deleted", description: `Deleted ${ids.length} chat(s).` });
 
-            // Refresh session list and clear active chat if it was deleted.
             await fetchSessions();
             if (activeSessionId && ids.includes(activeSessionId)) {
                 setActiveSessionId(undefined);
@@ -315,8 +302,6 @@ export function Chat() {
                 description: "Failed to send message.",
                 variant: "destructive",
             });
-            // Remove optimistic message on critical failure? Or just leave it with error state?
-            // For now, simple implementation.
         } finally {
             setIsLoading(false);
         }
@@ -338,47 +323,46 @@ export function Chat() {
         }
     };
 
-    return (
-        <div className={styles.container}>
-            {/* Desktop Sidebar */}
-            <div className={styles.sidebarDesktop}>
-                <ChatSidebar
-                    sessions={sessions}
-                    activeSessionId={activeSessionId}
-                    onSelectSession={setActiveSessionId}
-                    onNewChat={handleNewChat}
-                    onDeleteSession={handleDeleteSession}
-                    onRenameSession={handleRenameSession}
-                    onDeleteSessions={handleDeleteSessions}
-                />
-            </div>
+    const sidebarProps = {
+        sessions,
+        activeSessionId,
+        onSelectSession: (id: string) => {
+            setActiveSessionId(id);
+            setSidebarOpen(false);
+        },
+        onNewChat: handleNewChat,
+        onDeleteSession: handleDeleteSession,
+        onRenameSession: handleRenameSession,
+        onDeleteSessions: handleDeleteSessions,
+    };
 
-            {/* Main Chat Area */}
-            <div className={styles.mainArea}>
-                {/* Mobile Header */}
-                <div className={styles.mobileHeader}>
-                    <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
-                        <SheetTrigger asChild>
-                            <Button variant="ghost" size="icon" className={styles.mobileMenuButton}>
-                                <Menu className={styles.mobileMenuIcon} />
-                            </Button>
-                        </SheetTrigger>
-                        <SheetContent side="left" className={styles.sheetContent}>
-                            <ChatSidebar
-                                sessions={sessions}
-                                activeSessionId={activeSessionId}
-                                onSelectSession={(id) => {
-                                    setActiveSessionId(id);
-                                    setSidebarOpen(false);
-                                }}
-                                onNewChat={handleNewChat}
-                                onDeleteSession={handleDeleteSession}
-                                onRenameSession={handleRenameSession}
-                                onDeleteSessions={handleDeleteSessions}
-                            />
-                        </SheetContent>
-                    </Sheet>
-                    <span className={styles.mobileTitle}>Strawberry AI</span>
+    return (
+        <div className="flex h-full overflow-hidden bg-background">
+            {/* Chat history sidebar — always a Sheet overlay (mobile-first) */}
+            <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
+                <SheetContent side="left" className="p-0 w-80 sm:w-96">
+                    <ChatSidebar {...sidebarProps} />
+                </SheetContent>
+            </Sheet>
+
+            {/* Full-width chat area with toggle button */}
+            <div className="flex-1 flex flex-col min-w-0 h-full">
+                {/* Chat toolbar */}
+                <div className="flex items-center gap-2 px-3 py-2 border-b bg-background/95 backdrop-blur">
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 shrink-0"
+                        onClick={() => setSidebarOpen(true)}
+                        title="Chat history"
+                    >
+                        <PanelLeft className="h-4 w-4" />
+                    </Button>
+                    <span className="text-sm font-medium text-muted-foreground truncate">
+                        {activeSessionId
+                            ? sessions.find(s => s.id === activeSessionId)?.title || "Chat"
+                            : "New Chat"}
+                    </span>
                 </div>
 
                 <ChatArea

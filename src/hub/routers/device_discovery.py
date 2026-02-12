@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth import get_current_device
 from ..database import Device, get_db
 
-router = APIRouter(prefix="/devices", tags=["device-discovery"])
+router = APIRouter(prefix="/api/device-discovery", tags=["device-discovery"])
 
 
 class DeviceInfo(BaseModel):

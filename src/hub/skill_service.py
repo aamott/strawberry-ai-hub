@@ -154,7 +154,10 @@ class DevicesProxy:
             return self._device_cache
 
         result = await self._db.execute(
-            select(Device).where(Device.user_id == self._user_id, Device.is_active == True)
+            select(Device).where(
+                Device.user_id == self._user_id,
+                Device.is_active,
+            )
         )
         devices = result.scalars().all()
         self._device_cache = {normalize_device_name(d.name): d for d in devices}
@@ -202,7 +205,7 @@ class DevicesProxy:
         device_id_to_name = {
             d.id: normalize_device_name(d.name) for d in devices.values()
         }
-        
+
         # Pre-fetch connected status for sorting
         connected_device_ids = set()
         if self._connection_manager:
@@ -236,19 +239,27 @@ class DevicesProxy:
 
         for key, group in sorted(skill_groups.items(), key=lambda x: x[0][0]):
             unique_devices = sorted(set(group["devices"]))
-            
+
             # Sort devices: connected first, then alphabetical
             def _sort_key(d_name):
                 # Find device ID for this name (inefficient but safe for small N)
-                d_id = next((did for did, d in devices.items() if normalize_device_name(d.name) == d_name), None)
+                d_id = next(
+                    (
+                        did
+                        for did, d in devices.items()
+                        if normalize_device_name(d.name) == d_name
+                    ),
+                    None,
+                )
                 if d_id:
                     d_obj = devices[d_id]
                     is_connected = d_obj.id in connected_device_ids
-                    return (not is_connected, d_name) # False < True, so connected comes first
+                    # False < True, so connected comes first.
+                    return (not is_connected, d_name)
                 return (True, d_name)
 
             sorted_devices = sorted(unique_devices, key=_sort_key)
-            
+
             device_sample = sorted_devices[:max_devices]
             preferred_device = device_sample[0] if device_sample else None
             path = group["path"]
@@ -571,14 +582,19 @@ class HubSkillService:
             # Sort matches: connected devices first
             connected_device_ids = set()
             if self.connection_manager:
-                connected_device_ids = set(self.connection_manager.get_connected_devices())
+                connected_device_ids = set(
+                    self.connection_manager.get_connected_devices()
+                )
 
             def _sort_matches(match):
                 skill, device = match
-                return (not device.id in connected_device_ids, normalize_device_name(device.name))
+                return (
+                    device.id not in connected_device_ids,
+                    normalize_device_name(device.name),
+                )
 
             matches.sort(key=_sort_matches)
-        
+
         # Pick the top match (which is now the most preferred connected device)
         skill, device = matches[0]
 

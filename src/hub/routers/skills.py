@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth import get_current_device
 from ..config import settings
 from ..database import Device, Skill, get_db
+from ..skill_service import DevicesProxy
 from ..utils import normalize_device_name
 from .websocket import ConnectionManager, get_connection_manager
 
@@ -251,107 +252,9 @@ async def search_skills(
     device_limit: int = 10,
     device: Device = Depends(get_current_device),
     db: AsyncSession = Depends(get_db),
+    manager: ConnectionManager = Depends(get_connection_manager),
 ):
-    """Search for skills by name or docstring."""
-    # Get all devices for this user
-    user_devices = await _get_user_devices(db, device.user_id)
-
-    # Get non-expired skills
-    expiry_time = datetime.now(timezone.utc) - timedelta(
-        seconds=settings.skill_expiry_seconds
-    )
-    result = await db.execute(
-        select(Skill)
-        .where(Skill.device_id.in_(user_devices.keys()))
-        .where(Skill.last_heartbeat > expiry_time)
-    )
-    skills = result.scalars().all()
-
-    # Filter by query (simple substring match)
-    if query:
-        query_lower = query.lower()
-        skills = [
-            s
-            for s in skills
-            if query_lower in s.function_name.lower()
-            or query_lower in s.class_name.lower()
-            or (s.docstring and query_lower in s.docstring.lower())
-        ]
-
-    # Group skills by (class_name, function_name, signature) to avoid duplicates
-    # Each unique skill may exist on multiple devices
-    skill_groups: dict[tuple, dict] = {}
-
-    for s in skills:
-        key = (s.class_name, s.function_name, s.signature)
-        device_display_name = user_devices[s.device_id].name
-        device_normalized = normalize_device_name(device_display_name)
-
-        if key not in skill_groups:
-            # Get first line of docstring as summary
-            summary = ""
-            if s.docstring:
-                lines = s.docstring.strip().split("\n")
-                summary = lines[0] if lines else ""
-
-            skill_groups[key] = {
-                "path": f"{s.class_name}.{s.function_name}",
-                "signature": s.signature,
-                "summary": summary,
-                "docstring": s.docstring or "",
-                "devices": [],  # List of {name, normalized, id}
-                "is_local": False,  # True if available on requesting device
-            }
-
-        # Add this device to the skill's device list
-        skill_groups[key]["devices"].append(
-            {
-                "name": device_display_name,
-                "normalized": device_normalized,
-                "id": s.device_id,
-            }
-        )
-
-        # Mark if this skill is on the local device
-        if s.device_id == device.id:
-            skill_groups[key]["is_local"] = True
-
-    # Format results: local skills first, then by class name
-    results = []
-    max_sample_devices = max(1, min(device_limit, 100))
-
-    for key, group in sorted(
-        skill_groups.items(), key=lambda x: (not x[1]["is_local"], x[0][0])
-    ):
-        # Sort devices: local device first, then alphabetically
-        sorted_devices = sorted(
-            group["devices"], key=lambda d: (d["id"] != device.id, d["normalized"])
-        )
-
-        device_keys = [d["normalized"] for d in sorted_devices[:max_sample_devices]]
-        preferred_device = device_keys[0] if device_keys else None
-        path = group["path"]
-
-        results.append(
-            {
-                "path": path,
-                "signature": group["signature"],
-                "summary": group["summary"],
-                "docstring": group["docstring"],
-                "devices": device_keys,
-                "device_names": [d["name"] for d in sorted_devices[:max_sample_devices]],
-                "device_count": len(sorted_devices),
-                "is_local": group["is_local"],
-                "preferred_device": preferred_device,
-                "call_example": (
-                    f"devices.{preferred_device}.{path}(...)" if preferred_device else ""
-                ),
-                "python_exec_example": (
-                    f'python_exec(code="print(devices.{preferred_device}.{path}(...))")'
-                    if preferred_device
-                    else ""
-                ),
-            }
-        )
-
+    """Search for skills using the canonical DevicesProxy implementation."""
+    proxy = DevicesProxy(db=db, user_id=device.user_id, connection_manager=manager)
+    results = await proxy.search_skills(query=query, device_limit=device_limit)
     return {"results": results, "total": len(results)}

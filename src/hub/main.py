@@ -91,6 +91,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Make the connection manager available even in contexts where lifespan
+# startup hooks are not executed (e.g., some test harnesses).
+app.state.connection_manager = connection_manager
+
 # Protocol version middleware — reject unsupported Spoke protocol versions
 app.add_middleware(ProtocolVersionMiddleware)
 

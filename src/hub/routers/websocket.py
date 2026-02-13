@@ -237,10 +237,10 @@ connection_manager = ConnectionManager()
 
 
 def get_connection_manager(request: Request) -> ConnectionManager:
-    """Return the Hub connection manager from app state, with safe fallback."""
+    """Return the Hub connection manager from application state."""
     manager = getattr(request.app.state, "connection_manager", None)
     if manager is None:
-        return connection_manager
+        raise RuntimeError("Connection manager is not configured on app.state")
     return manager
 
 
@@ -248,7 +248,7 @@ def get_ws_connection_manager(websocket: WebSocket) -> ConnectionManager:
     """Return the Hub connection manager for WebSocket handlers."""
     manager = getattr(websocket.app.state, "connection_manager", None)
     if manager is None:
-        return connection_manager
+        raise RuntimeError("Connection manager is not configured on app.state")
     return manager
 
 

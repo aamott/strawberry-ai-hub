@@ -16,16 +16,18 @@ import logging
 import re as _re
 import time
 import uuid
+from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import get_current_device
 from ..config import settings
-from ..database import Device, get_db
+from ..database import Device, Message, Session, get_db
 from ..tensorzero_gateway import inference as tz_inference
 from ..tensorzero_gateway import inference_stream as tz_inference_stream
 from ..utils import normalize_device_name
@@ -59,6 +61,7 @@ class ChatCompletionRequest(BaseModel):
     max_tokens: Optional[int] = None
     stream: bool = False
     enable_tools: bool = False
+    session_id: Optional[str] = None
 
 
 class ChatChoice(BaseModel):
@@ -119,6 +122,71 @@ def _normalize_messages(
     return normalized
 
 
+async def _get_session_for_user(
+    db: AsyncSession,
+    session_id: str,
+    user_id: str,
+) -> Session:
+    """Load a session scoped to the current user.
+
+    Args:
+        db: Active database session.
+        session_id: Identifier for the session.
+        user_id: User identifier for access control.
+
+    Returns:
+        The matching Session row.
+
+    Raises:
+        HTTPException: If the session does not exist for the user.
+    """
+    result = await db.execute(
+        select(Session).where(
+            Session.id == session_id,
+            Session.user_id == user_id,
+        )
+    )
+    session = result.scalar_one_or_none()
+
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    return session
+
+
+def _extract_latest_user_message(messages: List[ChatMessage]) -> Optional[str]:
+    """Extract the latest user message content from a chat request."""
+    for message in reversed(messages):
+        if message.role == "user" and message.content.strip():
+            return message.content
+    return None
+
+
+async def _append_session_message(
+    db: AsyncSession,
+    session: Session,
+    role: str,
+    content: str,
+) -> None:
+    """Append a message to a session and update cached session metadata."""
+    now = datetime.now(timezone.utc)
+    message = Message(
+        session_id=session.id,
+        role=role,
+        content=content,
+        created_at=now,
+    )
+    db.add(message)
+
+    session.last_activity = now
+    session.message_count += 1
+
+    if session.title is None and role == "user":
+        session.title = content[:50] + ("..." if len(content) > 50 else "")
+
+    await db.commit()
+
+
 @router.post("/v1/chat/completions")
 async def chat_completions(
     request: ChatCompletionRequest,
@@ -141,6 +209,19 @@ async def chat_completions(
         len(request.messages),
     )
 
+    session: Optional[Session] = None
+    if request.session_id:
+        if request.stream:
+            raise HTTPException(
+                status_code=400,
+                detail="session_id is not supported with stream=true",
+            )
+        session = await _get_session_for_user(db, request.session_id, device.user_id)
+
+        latest_user_message = _extract_latest_user_message(request.messages)
+        if latest_user_message:
+            await _append_session_message(db, session, "user", latest_user_message)
+
     if request.stream:
         stream_iter = _stream_chat_completions(
             request=request,
@@ -152,9 +233,17 @@ async def chat_completions(
 
     if request.enable_tools:
         logger.info("[Chat] Routing to agent loop (enable_tools=True)")
-        return await _run_agent_loop(request, device, db, manager)
-    logger.info("[Chat] Routing to pass-through (enable_tools=False)")
-    return await _call_tensorzero(request, use_tools=False)
+        response = await _run_agent_loop(request, device, db, manager)
+    else:
+        logger.info("[Chat] Routing to pass-through (enable_tools=False)")
+        response = await _call_tensorzero(request, use_tools=False)
+
+    if session is not None:
+        assistant_content = response.choices[0].message.content
+        if assistant_content.strip():
+            await _append_session_message(db, session, "assistant", assistant_content)
+
+    return response
 
 
 def _sse(data: dict[str, Any]) -> str:

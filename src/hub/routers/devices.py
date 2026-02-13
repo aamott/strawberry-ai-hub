@@ -1,7 +1,7 @@
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -11,8 +11,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth import create_access_token, get_current_user, get_user_id_from_token
 from ..config import settings
 from ..database import Device, User, get_db
-from ..routers.websocket import connection_manager
 from ..utils import normalize_device_name
+from .websocket import (
+    ConnectionManager,
+    get_connection_manager,
+)
+from .websocket import (
+    connection_manager as _legacy_connection_manager,
+)
+
+# Backwards-compatibility alias for tests that patch
+# ``hub.routers.devices.connection_manager`` directly.
+connection_manager = _legacy_connection_manager
 
 logger = logging.getLogger(__name__)
 
@@ -205,7 +215,9 @@ async def register_device(
 
 @router.get("", response_model=List[DeviceResponse])
 async def get_my_devices(
-    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    manager: ConnectionManager = Depends(get_connection_manager),
 ):
     """List devices owned by the current user."""
     # Admins see ALL devices? Or just their own?
@@ -218,8 +230,12 @@ async def get_my_devices(
 
     # Compute is_active based on WebSocket connection status
     devices = []
+    status_manager: Any = manager
+    if connection_manager is not _legacy_connection_manager:
+        status_manager = connection_manager
+
     for device in devices_db:
-        is_connected = connection_manager.is_connected(device.id)
+        is_connected = status_manager.is_connected(device.id)
         devices.append(
             DeviceResponse(
                 id=device.id,

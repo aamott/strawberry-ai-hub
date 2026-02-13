@@ -4,6 +4,7 @@ Provides a singleton async gateway that routes LLM requests through
 TensorZero with fallback support between providers.
 """
 
+import logging
 import os
 from pathlib import Path
 from typing import Any, Optional
@@ -16,6 +17,7 @@ except Exception:  # pragma: no cover
 # Global gateway instance (lazy initialization)
 _gateway: Optional[AsyncTensorZeroGateway] = None
 _gateway_initialized: bool = False
+logger = logging.getLogger(__name__)
 
 
 def get_config_path() -> str:
@@ -79,7 +81,7 @@ async def shutdown_gateway() -> None:
         try:
             await _gateway.__aexit__(None, None, None)
         except Exception:
-            pass  # Best effort cleanup
+            logger.exception("TensorZero gateway shutdown failed")
         _gateway = None
         _gateway_initialized = False
 

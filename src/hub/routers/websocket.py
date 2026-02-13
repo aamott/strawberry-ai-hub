@@ -6,12 +6,20 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import decode_token
 from ..database import Device, get_db
+from ..protocol import PROTOCOL_VERSION_HEADER, SUPPORTED_VERSIONS
 
 logger = logging.getLogger(__name__)
 
@@ -228,6 +236,56 @@ class ConnectionManager:
 connection_manager = ConnectionManager()
 
 
+def get_connection_manager(request: Request) -> ConnectionManager:
+    """Return the Hub connection manager from app state, with safe fallback."""
+    manager = getattr(request.app.state, "connection_manager", None)
+    if manager is None:
+        return connection_manager
+    return manager
+
+
+def get_ws_connection_manager(websocket: WebSocket) -> ConnectionManager:
+    """Return the Hub connection manager for WebSocket handlers."""
+    manager = getattr(websocket.app.state, "connection_manager", None)
+    if manager is None:
+        return connection_manager
+    return manager
+
+
+def _resolve_ws_protocol_version(websocket: WebSocket) -> str | None:
+    """Resolve protocol version declared by the WebSocket client.
+
+    Supports both:
+    - HTTP header: X-Protocol-Version
+    - Query param: protocol_version
+
+    If both are present and disagree, raises HTTPException.
+
+    Args:
+        websocket: Incoming WebSocket connection.
+
+    Returns:
+        The declared protocol version, or ``None`` if omitted.
+
+    Raises:
+        HTTPException: If header/query versions conflict.
+    """
+    header_version = websocket.headers.get(PROTOCOL_VERSION_HEADER)
+    query_version = websocket.query_params.get("protocol_version")
+
+    if header_version and query_version and header_version != query_version:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Conflicting protocol versions between "
+                f"{PROTOCOL_VERSION_HEADER}='{header_version}' and "
+                f"query protocol_version='{query_version}'"
+            ),
+        )
+
+    return header_version or query_version
+
+
 async def get_device_from_token(
     websocket: WebSocket,
     token: str,
@@ -279,6 +337,7 @@ async def websocket_device_endpoint(
     token: str,
     device_id: str | None = None,
     db: AsyncSession = Depends(get_db),
+    manager: ConnectionManager = Depends(get_ws_connection_manager),
 ):
     """WebSocket endpoint for device connections.
 
@@ -289,7 +348,25 @@ async def websocket_device_endpoint(
         token: JWT authentication token
         device_id: Optional Hub-assigned device ID (overrides JWT device).
             Used when multiple Spokes share one auth token.
+        protocol_version: Optional wire protocol version (e.g., v1).
     """
+    # Validate wire protocol version when provided.
+    try:
+        version = _resolve_ws_protocol_version(websocket)
+    except HTTPException as exc:
+        await websocket.close(code=1008, reason=exc.detail)
+        return
+
+    if version is not None and version not in SUPPORTED_VERSIONS:
+        await websocket.close(
+            code=1008,
+            reason=(
+                f"Unsupported protocol version: {version}. "
+                f"Supported: {', '.join(sorted(SUPPORTED_VERSIONS))}"
+            ),
+        )
+        return
+
     # Authenticate via JWT
     device = await get_device_from_token(websocket, token, db)
 
@@ -312,7 +389,7 @@ async def websocket_device_endpoint(
     await websocket.accept()
 
     # Register connection
-    await connection_manager.connect(device.id, websocket)
+    await manager.connect(device.id, websocket)
 
     # Update last_seen
     device.last_seen = datetime.now(timezone.utc)
@@ -328,7 +405,7 @@ async def websocket_device_endpoint(
 
             if msg_type == "skill_response":
                 # Response to a skill execution request
-                await connection_manager.handle_skill_response(message)
+                await manager.handle_skill_response(message)
 
             elif msg_type == "ping":
                 # Heartbeat ping
@@ -345,4 +422,4 @@ async def websocket_device_endpoint(
 
     finally:
         # Unregister connection
-        await connection_manager.disconnect(device.id)
+        await manager.disconnect(device.id)

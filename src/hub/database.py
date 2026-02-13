@@ -1,5 +1,6 @@
 """Database setup and models."""
 
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -8,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from .config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class Base(DeclarativeBase):
@@ -181,6 +184,10 @@ async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+        # Migration shim only applies to SQLite-based deployments.
+        if not settings.database_url.startswith("sqlite"):
+            return
+
         # Lightweight schema migration for existing SQLite databases.
         # The project uses create_all (no Alembic), so we must handle the case
         # where hub.db was created before new columns were added.
@@ -206,9 +213,8 @@ async def init_db():
                     text("ALTER TABLE sessions ADD COLUMN last_mode_prompt VARCHAR(32)")
                 )
         except Exception:
-            # Best-effort: if PRAGMA/ALTER fails (non-SQLite, permissions, etc.),
-            # allow startup to proceed and surface errors during normal operations.
-            pass
+            logger.exception("Session schema migration check failed")
+            raise
 
 
 async def get_db() -> AsyncSession:

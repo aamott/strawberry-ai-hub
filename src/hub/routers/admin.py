@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -15,6 +16,7 @@ from ..auth import (
     get_password_hash,
     verify_password,
 )
+from ..config import HUB_ROOT
 from ..database import User, get_db
 
 router = APIRouter(prefix="/api", tags=["admin"])
@@ -47,6 +49,38 @@ class Token(BaseModel):
 
 class ConfigUpdate(BaseModel):
     content: str
+
+
+ENV_PATH = HUB_ROOT / ".env"
+TENSORZERO_CONFIG_PATH = HUB_ROOT / "config" / "tensorzero.toml"
+
+
+def _write_text_atomic(path: Path, content: str) -> None:
+    """Write text to ``path`` atomically with a rollback safety net.
+
+    The write uses a temporary file in the same directory followed by
+    ``replace`` to avoid partial writes on crash.
+
+    Args:
+        path: Target file path.
+        content: New text content.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_suffix(f"{path.suffix}.tmp")
+    backup_path = path.with_suffix(f"{path.suffix}.bak")
+
+    if path.exists():
+        backup_path.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+
+    try:
+        temp_path.write_text(content, encoding="utf-8")
+        temp_path.replace(path)
+        if backup_path.exists():
+            backup_path.unlink()
+    except Exception:
+        if backup_path.exists():
+            backup_path.replace(path)
+        raise
 
 
 # --- User Management ---
@@ -199,8 +233,7 @@ async def get_env_config(user: User = Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Admin required")
 
     try:
-        with open(".env", "r") as f:
-            return {"content": f.read()}
+        return {"content": ENV_PATH.read_text(encoding="utf-8")}
     except FileNotFoundError:
         return {"content": ""}
 
@@ -211,10 +244,7 @@ async def update_env_config(config: ConfigUpdate, user: User = Depends(get_curre
     if not user.is_admin:
         raise HTTPException(status_code=403, detail="Admin required")
 
-    # Safety check: Prevent totally breaking the app?
-    # For now, just write it. User beware.
-    with open(".env", "w") as f:
-        f.write(config.content)
+    _write_text_atomic(ENV_PATH, config.content)
     return {"status": "updated"}
 
 
@@ -225,8 +255,7 @@ async def get_tensorzero_config(user: User = Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Admin required")
 
     try:
-        with open("tensorzero.toml", "r") as f:
-            return {"content": f.read()}
+        return {"content": TENSORZERO_CONFIG_PATH.read_text(encoding="utf-8")}
     except FileNotFoundError:
         # Return default template if missing
         return {"content": "# tensorzero.toml\n[gateway]\n# Add configuration here\n"}
@@ -240,7 +269,6 @@ async def update_tensorzero_config(
     if not user.is_admin:
         raise HTTPException(status_code=403, detail="Admin required")
 
-    with open("tensorzero.toml", "w") as f:
-        f.write(config.content)
+    _write_text_atomic(TENSORZERO_CONFIG_PATH, config.content)
 
     return {"status": "updated"}

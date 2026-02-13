@@ -29,6 +29,7 @@ from ..database import Device, get_db
 from ..tensorzero_gateway import inference as tz_inference
 from ..tensorzero_gateway import inference_stream as tz_inference_stream
 from ..utils import normalize_device_name
+from .websocket import ConnectionManager, get_connection_manager
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +124,7 @@ async def chat_completions(
     request: ChatCompletionRequest,
     device: Device = Depends(get_current_device),
     db: AsyncSession = Depends(get_db),
+    manager: ConnectionManager = Depends(get_connection_manager),
 ) -> Any:
     """OpenAI-compatible chat completions endpoint.
 
@@ -140,12 +142,17 @@ async def chat_completions(
     )
 
     if request.stream:
-        stream_iter = _stream_chat_completions(request=request, device=device, db=db)
+        stream_iter = _stream_chat_completions(
+            request=request,
+            device=device,
+            db=db,
+            manager=manager,
+        )
         return StreamingResponse(stream_iter, media_type="text/event-stream")
 
     if request.enable_tools:
         logger.info("[Chat] Routing to agent loop (enable_tools=True)")
-        return await _run_agent_loop(request, device, db)
+        return await _run_agent_loop(request, device, db, manager)
     logger.info("[Chat] Routing to pass-through (enable_tools=False)")
     return await _call_tensorzero(request, use_tools=False)
 
@@ -246,6 +253,7 @@ async def _stream_chat_completions(
     request: ChatCompletionRequest,
     device: Device,
     db: AsyncSession,
+    manager: ConnectionManager,
 ) -> AsyncIterator[str]:
     """Stream a chat completion response as SSE events.
 
@@ -264,7 +272,12 @@ async def _stream_chat_completions(
     """
     try:
         if request.enable_tools:
-            async for event in _agent_loop_events(request=request, device=device, db=db):
+            async for event in _agent_loop_events(
+                request=request,
+                device=device,
+                db=db,
+                manager=manager,
+            ):
                 yield _sse(event)
         else:
             # Pass-through: stream the response token-by-token.
@@ -364,6 +377,7 @@ async def _execute_single_tool(
             tc.get("name"),
             tc.get("arguments"),
         )
+
     result = await skill_service.execute_tool(tc["name"], tc["arguments"])
     return result, True
 
@@ -462,6 +476,7 @@ async def _agent_loop_events(
     request: ChatCompletionRequest,
     device: Device,
     db: AsyncSession,
+    manager: ConnectionManager,
 ) -> AsyncIterator[dict[str, Any]]:
     """Run agent loop and yield structured events.
 
@@ -470,12 +485,11 @@ async def _agent_loop_events(
     - classic JSON responses (non-streaming)
     """
     from ..skill_service import HubSkillService
-    from .websocket import connection_manager
 
     skill_service = HubSkillService(
         db=db,
         user_id=device.user_id,
-        connection_manager=connection_manager,
+        connection_manager=manager,
     )
 
     messages: List[Dict[str, Any]] = []
@@ -573,6 +587,7 @@ async def _run_agent_loop(
     request: ChatCompletionRequest,
     device: Device,
     db: AsyncSession,
+    manager: ConnectionManager,
 ) -> ChatCompletionResponse:
     """Run agent loop with tool execution.
 
@@ -587,7 +602,12 @@ async def _run_agent_loop(
         "total_tokens": 0,
     }
 
-    async for event in _agent_loop_events(request=request, device=device, db=db):
+    async for event in _agent_loop_events(
+        request=request,
+        device=device,
+        db=db,
+        manager=manager,
+    ):
         if not isinstance(event, dict):
             continue
         if str(event.get("type") or "") == "assistant_message":
@@ -778,6 +798,8 @@ async def _stream_inference_as_deltas(
 async def inference(
     request: ChatCompletionRequest,
     device: Device = Depends(get_current_device),
+    db: AsyncSession = Depends(get_db),
+    manager: ConnectionManager = Depends(get_connection_manager),
 ) -> ChatCompletionResponse:
     """TensorZero-style inference endpoint."""
-    return await chat_completions(request, device)
+    return await chat_completions(request, device, db=db, manager=manager)

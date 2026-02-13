@@ -2,11 +2,14 @@
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 
 from hub.main import app
+from hub.routers.websocket import _resolve_ws_protocol_version
 from hub.utils import normalize_device_name
 
 # ── Normalization parity tests ──────────────────────────────────────────────
@@ -75,3 +78,27 @@ async def test_unsupported_version_rejected():
         )
     assert resp.status_code == 400
     assert "v99" in resp.text
+
+
+def test_ws_protocol_version_from_header():
+    """WebSocket protocol version can be resolved from request header."""
+    ws = SimpleNamespace(headers={"X-Protocol-Version": "v1"}, query_params={})
+    assert _resolve_ws_protocol_version(ws) == "v1"
+
+
+def test_ws_protocol_version_from_query():
+    """WebSocket protocol version can be resolved from query parameter."""
+    ws = SimpleNamespace(headers={}, query_params={"protocol_version": "v1"})
+    assert _resolve_ws_protocol_version(ws) == "v1"
+
+
+def test_ws_protocol_version_conflict_rejected():
+    """Conflicting header/query protocol versions should fail validation."""
+    ws = SimpleNamespace(
+        headers={"X-Protocol-Version": "v1"},
+        query_params={"protocol_version": "v2"},
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        _resolve_ws_protocol_version(ws)
+    assert exc_info.value.status_code == 400
+    assert "Conflicting protocol versions" in str(exc_info.value.detail)

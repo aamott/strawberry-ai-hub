@@ -34,6 +34,8 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
+    app.state.connection_manager = connection_manager
+
     # Startup - skip if in test mode (tables already created)
     if "pytest" not in sys.modules:
         # Load .env file from project root (ai-hub/.env) before initializing TensorZero.
@@ -65,19 +67,20 @@ async def lifespan(app: FastAPI):
     try:
         await shutdown_gateway()
     except Exception:
-        pass
+        logger.exception("Error while shutting down TensorZero gateway")
 
     # Close WebSocket connections and cancel pending requests
     try:
-        await connection_manager.shutdown()
+        manager = getattr(app.state, "connection_manager", connection_manager)
+        await manager.shutdown()
     except Exception:
-        pass
+        logger.exception("Error while shutting down WebSocket connection manager")
 
     # Dispose database engine
     try:
         await dispose_engine()
     except Exception:
-        pass
+        logger.exception("Error while disposing database engine")
 
 
 # Create FastAPI app

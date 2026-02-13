@@ -12,6 +12,7 @@ from ..auth import get_current_device
 from ..config import settings
 from ..database import Device, Skill, get_db
 from ..utils import normalize_device_name
+from .websocket import ConnectionManager, get_connection_manager
 
 router = APIRouter(prefix="/skills", tags=["skills"])
 
@@ -140,14 +141,12 @@ async def execute_skill(
     request: SkillExecuteRequest,
     device: Device = Depends(get_current_device),
     db: AsyncSession = Depends(get_db),
+    manager: ConnectionManager = Depends(get_connection_manager),
 ):
     """Execute a skill on a remote device via WebSocket.
 
     Routes the skill call to the target device through the WebSocket connection.
     """
-    # Import here to avoid circular dependency
-    from .websocket import connection_manager
-
     # Find target device by normalized name (must be same user)
     # Get all user devices and match by normalized name
     user_devices = await _get_user_devices(db, device.user_id)
@@ -166,7 +165,7 @@ async def execute_skill(
         )
 
     # Check if device is connected
-    if not connection_manager.is_connected(target_device.id):
+    if not manager.is_connected(target_device.id):
         raise HTTPException(
             status_code=503,
             detail=f"Device '{request.device_name}' is not currently connected",
@@ -174,7 +173,7 @@ async def execute_skill(
 
     # Execute skill via WebSocket
     try:
-        result = await connection_manager.send_skill_request(
+        result = await manager.send_skill_request(
             device_id=target_device.id,
             skill_name=request.skill_name,
             method_name=request.method_name,

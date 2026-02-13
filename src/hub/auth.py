@@ -166,8 +166,6 @@ async def _resolve_device_token(
 
     # If no override, use the JWT device directly (legacy path).
     if not device_id_override or device_id_override == jwt_device_id:
-        jwt_device.last_seen = datetime.now(timezone.utc)
-        await db.commit()
         return jwt_device
 
     # Override present: look up the target device and verify ownership.
@@ -194,8 +192,6 @@ async def _resolve_device_token(
             detail="Device is deactivated",
         )
 
-    target_device.last_seen = datetime.now(timezone.utc)
-    await db.commit()
     return target_device
 
 

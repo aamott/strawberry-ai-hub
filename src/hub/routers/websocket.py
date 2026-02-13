@@ -254,6 +254,7 @@ async def get_device_from_token(
 async def websocket_device_endpoint(
     websocket: WebSocket,
     token: str,
+    device_id: str | None = None,
     db: AsyncSession = Depends(get_db),
 ):
     """WebSocket endpoint for device connections.
@@ -263,9 +264,26 @@ async def websocket_device_endpoint(
 
     Query params:
         token: JWT authentication token
+        device_id: Optional Hub-assigned device ID (overrides JWT device).
+            Used when multiple Spokes share one auth token.
     """
-    # Authenticate
+    # Authenticate via JWT
     device = await get_device_from_token(websocket, token, db)
+
+    # If a device_id override is provided, look it up and verify ownership.
+    if device_id and device_id != device.id:
+        result = await db.execute(select(Device).where(Device.id == device_id))
+        target = result.scalar_one_or_none()
+        if target and target.user_id == device.user_id and target.is_active:
+            device = target
+        else:
+            logger.warning(
+                "WebSocket device_id override %s denied for JWT device %s",
+                device_id,
+                device.id,
+            )
+            await websocket.close(code=1008, reason="Invalid device_id override")
+            return
 
     # Accept connection
     await websocket.accept()

@@ -32,6 +32,8 @@ class ConnectionManager:
         self._connections: Dict[str, WebSocket] = {}
         # Map request_id -> Future for pending skill requests
         self._pending_requests: Dict[str, asyncio.Future] = {}
+        # Map request_id -> target device_id for cleanup on disconnect
+        self._request_device_ids: Dict[str, str] = {}
         # Lock for thread-safe operations
         self._lock = asyncio.Lock()
 
@@ -64,6 +66,21 @@ class ConnectionManager:
             if device_id in self._connections:
                 del self._connections[device_id]
                 logger.info(f"Device {device_id} disconnected")
+
+            # Fail any in-flight requests targeting this device immediately
+            # instead of waiting for per-request timeout.
+            for request_id, target_device_id in list(self._request_device_ids.items()):
+                if target_device_id != device_id:
+                    continue
+                future = self._pending_requests.get(request_id)
+                if future and not future.done():
+                    future.set_exception(
+                        ConnectionError(
+                            f"Device {device_id} disconnected before replying"
+                        )
+                    )
+                self._pending_requests.pop(request_id, None)
+                self._request_device_ids.pop(request_id, None)
 
     def is_connected(self, device_id: str) -> bool:
         """Check if a device is currently connected.
@@ -103,19 +120,20 @@ class ConnectionManager:
             TimeoutError: If device doesn't respond in time
             RuntimeError: If skill execution fails
         """
-        if not self.is_connected(device_id):
-            raise ValueError(f"Device {device_id} is not connected")
-
         # Generate unique request ID
         request_id = str(uuid.uuid4())
 
-        # Create future for response
-        future = asyncio.Future()
-        self._pending_requests[request_id] = future
+        # Atomically resolve the socket and register the pending future.
+        async with self._lock:
+            websocket = self._connections.get(device_id)
+            if websocket is None:
+                raise ValueError(f"Device {device_id} is not connected")
+            future = asyncio.get_running_loop().create_future()
+            self._pending_requests[request_id] = future
+            self._request_device_ids[request_id] = device_id
 
         try:
             # Send request
-            websocket = self._connections[device_id]
             message = {
                 "type": "skill_request",
                 "request_id": request_id,
@@ -138,7 +156,9 @@ class ConnectionManager:
 
         finally:
             # Clean up pending request
-            self._pending_requests.pop(request_id, None)
+            async with self._lock:
+                self._pending_requests.pop(request_id, None)
+                self._request_device_ids.pop(request_id, None)
 
     async def handle_skill_response(self, response: dict):
         """Handle a skill response from a device.
@@ -151,21 +171,24 @@ class ConnectionManager:
             logger.warning("Received skill response without request_id")
             return
 
-        future = self._pending_requests.get(request_id)
-        if not future:
-            logger.warning(f"Received response for unknown request {request_id}")
-            return
+        async with self._lock:
+            future = self._pending_requests.get(request_id)
+            if not future:
+                logger.warning(f"Received response for unknown request {request_id}")
+                return
 
-        if future.done():
-            logger.debug(f"Received response for already-completed request {request_id}")
-            return
+            if future.done():
+                logger.debug(
+                    f"Received response for already-completed request {request_id}"
+                )
+                return
 
-        # Resolve the future
-        if response.get("success"):
-            future.set_result(response.get("result"))
-        else:
-            error = response.get("error", "Unknown error")
-            future.set_exception(RuntimeError(error))
+            # Resolve the future
+            if response.get("success"):
+                future.set_result(response.get("result"))
+            else:
+                error = response.get("error", "Unknown error")
+                future.set_exception(RuntimeError(error))
 
     def get_connected_devices(self) -> list[str]:
         """Get list of currently connected device IDs.
@@ -187,6 +210,7 @@ class ConnectionManager:
             if not future.done():
                 future.cancel()
         self._pending_requests.clear()
+        self._request_device_ids.clear()
 
         # Close all WebSocket connections
         for device_id, websocket in list(self._connections.items()):

@@ -1,5 +1,37 @@
 @import "tailwindcss";
 
+/* ---------------------------------------------------------------------------
+ * Tailwind v4 theme — registers custom colors so utility classes like
+ * bg-popover, text-muted-foreground, etc. work out of the box.
+ * (Replaces the old tailwind.config.js which v4 does NOT read.)
+ * --------------------------------------------------------------------------- */
+@theme {
+  --color-background:           hsl(var(--background));
+  --color-foreground:           hsl(var(--foreground));
+  --color-card:                 hsl(var(--card));
+  --color-card-foreground:      hsl(var(--card-foreground));
+  --color-popover:              hsl(var(--popover));
+  --color-popover-foreground:   hsl(var(--popover-foreground));
+  --color-primary:              hsl(var(--primary));
+  --color-primary-foreground:   hsl(var(--primary-foreground));
+  --color-secondary:            hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted:                hsl(var(--muted));
+  --color-muted-foreground:     hsl(var(--muted-foreground));
+  --color-accent:               hsl(var(--accent));
+  --color-accent-foreground:    hsl(var(--accent-foreground));
+  --color-destructive:          hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-border:               hsl(var(--border));
+  --color-input:                hsl(var(--input));
+  --color-ring:                 hsl(var(--ring));
+  --radius:                     0.5rem;
+}
+
+/* ---------------------------------------------------------------------------
+ * CSS custom properties — light / dark palettes.
+ * These feed the @theme block above via hsl(var(--xxx)).
+ * --------------------------------------------------------------------------- */
 @layer base {
   :root {
     --background: 0 0% 100%;
@@ -21,7 +53,6 @@
     --border: 214.3 31.8% 91.4%;
     --input: 214.3 31.8% 91.4%;
     --ring: 221.2 83.2% 53.3%;
-    --radius: 0.5rem;
   }
 
   .dark {
@@ -47,6 +78,9 @@
   }
 }
 
+/* ---------------------------------------------------------------------------
+ * Global base styles
+ * --------------------------------------------------------------------------- */
 @layer base {
   * {
     border-color: hsl(var(--border));
@@ -56,4 +90,103 @@
     background-color: hsl(var(--background));
     color: hsl(var(--foreground));
   }
+
+  /* Pointer cursor on all interactive elements. */
+  button,
+  [role="button"],
+  a,
+  input[type="checkbox"],
+  input[type="radio"],
+  select,
+  summary {
+    cursor: pointer;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Reusable component classes — extracted from repeated Tailwind strings.
+ *
+ * NOTE: Tailwind v4 @apply cannot use marker classes like `group` or
+ * pseudo-group variants like `group-hover:*`. Those stay in JSX.
+ * These classes cover the *static* portion of repeated patterns.
+ * --------------------------------------------------------------------------- */
+@layer components {
+  /* ── Sidebar surface ── */
+  .sidebar-surface {
+    @apply bg-popover;
+  }
+
+  /* ── Navigation item (base + active modifier) ── */
+  .nav-item {
+    @apply flex items-center gap-3 rounded-lg text-sm font-medium
+           w-full px-3 py-2 transition-colors
+           text-muted-foreground hover:bg-accent hover:text-accent-foreground;
+  }
+  .nav-item--active {
+    @apply bg-primary/10 text-primary;
+  }
+
+  /* ── Section labels (e.g. "CHATS", "PINNED", "RECENT") ── */
+  .section-label {
+    @apply text-[10px] font-semibold uppercase tracking-wider text-muted-foreground;
+  }
+
+  /* ── Chat session row (base + active modifier) ──
+       NOTE: Add `group` class in JSX alongside `chat-row` for hover actions. */
+  .chat-row {
+    @apply flex items-center gap-2 rounded-lg px-3 py-2
+           text-sm cursor-pointer transition-colors
+           text-muted-foreground hover:bg-accent hover:text-accent-foreground;
+  }
+  .chat-row--active {
+    @apply bg-primary/10 text-primary;
+  }
+
+  /* ── Hover action buttons (pin, rename, delete on chat rows) ──
+       NOTE: Parent must have `group` class. Add `group-hover:opacity-100`
+       in JSX on the container, since group-hover can't be @apply'd. */
+  .hover-actions {
+    @apply flex gap-0.5 opacity-0 transition-opacity shrink-0;
+  }
+  .hover-action-btn {
+    @apply h-6 w-6 cursor-pointer hover:bg-background/50;
+  }
+  .hover-action-btn--danger {
+    @apply h-6 w-6 cursor-pointer hover:bg-destructive/10 hover:text-destructive;
+  }
+
+  /* ── Floating menus / dropdowns ── */
+  .floating-menu {
+    @apply absolute z-50 rounded-lg border bg-popover p-1.5 shadow-lg text-sm;
+  }
+  .floating-menu-item {
+    @apply w-full text-left px-2 py-1.5 rounded cursor-pointer transition-colors hover:bg-accent;
+  }
+  .floating-menu-item--active {
+    @apply bg-primary/10 text-primary;
+  }
+
+  /* ── Small icon-sized sidebar buttons ── */
+  .sidebar-icon-btn {
+    @apply h-7 w-7 cursor-pointer;
+  }
+
+  /* ── Sticky header bar ── */
+  .app-header {
+    @apply sticky top-0 z-40 border-b bg-background/95 backdrop-blur
+           h-14 flex items-center px-4 gap-3 shrink-0;
+  }
+
+  /* ── Account avatar circle ── */
+  .avatar-circle {
+    @apply h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center
+           text-primary font-bold text-xs cursor-pointer
+           hover:bg-primary/30 transition-colors;
+  }
+
+  /* ── Icon sizing shortcuts ── */
+  .icon-sm   { @apply h-3 w-3; }
+  .icon-md   { @apply h-3.5 w-3.5; }
+  .icon-base { @apply h-4 w-4; }
+  .icon-lg   { @apply h-5 w-5; }
 }

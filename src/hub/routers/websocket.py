@@ -11,7 +11,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import decode_token
-from ..config import settings
 from ..database import Device, get_db
 
 logger = logging.getLogger(__name__)
@@ -309,11 +308,7 @@ async def websocket_device_endpoint(
 
             elif msg_type == "ping":
                 # Heartbeat ping
-                if settings.log_ping_pong:
-                    logger.debug("Received ping from %s", device.id)
                 await websocket.send_json({"type": "pong"})
-                if settings.log_ping_pong:
-                    logger.debug("Sent pong to %s", device.id)
 
             else:
                 logger.warning(f"Unknown message type from {device.id}: {msg_type}")

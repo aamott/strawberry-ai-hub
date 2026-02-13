@@ -149,12 +149,12 @@ class DevicesProxy:
         self._device_cache: Dict[str, Device] = {}
 
     async def _get_user_devices(self) -> Dict[str, Device]:
-        """Get all devices for the current user."""
+        """Get all active devices for the current user."""
         if self._device_cache:
             return self._device_cache
 
         result = await self._db.execute(
-            select(Device).where(Device.user_id == self._user_id)
+            select(Device).where(Device.user_id == self._user_id, Device.is_active == True)
         )
         devices = result.scalars().all()
         self._device_cache = {normalize_device_name(d.name): d for d in devices}
@@ -202,6 +202,11 @@ class DevicesProxy:
         device_id_to_name = {
             d.id: normalize_device_name(d.name) for d in devices.values()
         }
+        
+        # Pre-fetch connected status for sorting
+        connected_device_ids = set()
+        if self._connection_manager:
+            connected_device_ids = set(self._connection_manager.get_connected_devices())
 
         for s in skills:
             key = (s.class_name, s.function_name, s.signature)
@@ -219,16 +224,31 @@ class DevicesProxy:
                     "summary": summary,
                     "docstring": s.docstring or "",
                     "devices": [],
+                    "device_ids": [],
                 }
 
             skill_groups[key]["devices"].append(device_name)
+            skill_groups[key]["device_ids"].append(s.device_id)
 
         # Format results
         results = []
         max_devices = max(1, min(device_limit, 100))
 
         for key, group in sorted(skill_groups.items(), key=lambda x: x[0][0]):
-            sorted_devices = sorted(set(group["devices"]))
+            unique_devices = sorted(set(group["devices"]))
+            
+            # Sort devices: connected first, then alphabetical
+            def _sort_key(d_name):
+                # Find device ID for this name (inefficient but safe for small N)
+                d_id = next((did for did, d in devices.items() if normalize_device_name(d.name) == d_name), None)
+                if d_id:
+                    d_obj = devices[d_id]
+                    is_connected = d_obj.id in connected_device_ids
+                    return (not is_connected, d_name) # False < True, so connected comes first
+                return (True, d_name)
+
+            sorted_devices = sorted(unique_devices, key=_sort_key)
+            
             device_sample = sorted_devices[:max_devices]
             preferred_device = device_sample[0] if device_sample else None
             path = group["path"]
@@ -548,24 +568,18 @@ class HubSkillService:
             }
 
         if len(matches) > 1:
-            options = []
-            for skill, device in matches:
-                options.append(
-                    {
-                        "device": normalize_device_name(device.name),
-                        "path": f"{skill.class_name}.{skill.function_name}",
-                        "signature": skill.signature,
-                    }
-                )
-            return {
-                "error": (
-                    f"Ambiguous skill tool '{tool_name}' matches multiple devices. "
-                    "Use python_exec and specify a device explicitly, e.g. "
-                    "devices.<device>.<Skill>.<method>(...). "
-                    f"Matches: {json.dumps(options, indent=2)}"
-                )
-            }
+            # Sort matches: connected devices first
+            connected_device_ids = set()
+            if self.connection_manager:
+                connected_device_ids = set(self.connection_manager.get_connected_devices())
 
+            def _sort_matches(match):
+                skill, device = match
+                return (not device.id in connected_device_ids, normalize_device_name(device.name))
+
+            matches.sort(key=_sort_matches)
+        
+        # Pick the top match (which is now the most preferred connected device)
         skill, device = matches[0]
 
         # Route to the owning device. The DevicesProxy expects a normalized device name.

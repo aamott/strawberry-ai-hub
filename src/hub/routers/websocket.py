@@ -14,11 +14,11 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import decode_token
-from ..database import Device, get_db
+from ..database import Device, Skill, get_db
 from ..protocol import PROTOCOL_VERSION_HEADER, SUPPORTED_VERSIONS
 
 logger = logging.getLogger(__name__)
@@ -423,3 +423,10 @@ async def websocket_device_endpoint(
     finally:
         # Unregister connection
         await manager.disconnect(device.id)
+
+        # Remove stale skills — the Spoke re-registers them on reconnect.
+        try:
+            await db.execute(delete(Skill).where(Skill.device_id == device.id))
+            await db.commit()
+        except Exception:
+            logger.exception("Failed to clean up skills for device %s", device.id)

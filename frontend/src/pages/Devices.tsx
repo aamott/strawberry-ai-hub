@@ -206,6 +206,16 @@ export function DevicesPage() {
         void loadDevices();
     }, [loadDevices]);
 
+    // Periodically refresh device data so the list stays accurate when
+    // devices disconnect/reconnect or skills are re-registered.
+    useEffect(() => {
+        const intervalId = window.setInterval(() => {
+            void loadDevices();
+        }, 10_000); // 10s cadence keeps UI fresh without spamming the API.
+
+        return () => window.clearInterval(intervalId);
+    }, [loadDevices]);
+
     // --- Filter devices by search (name or skill names) ---
     const filteredDevices = devices.filter((d) => {
         if (!search.trim()) return true;

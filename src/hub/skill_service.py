@@ -22,6 +22,7 @@ from .database import Device, Skill
 from .utils import normalize_device_name
 
 logger = logging.getLogger(__name__)
+DEVICE_AGNOSTIC_KEY = "hub"
 
 
 # Default system prompt for online mode (Hub executes tools).
@@ -61,6 +62,7 @@ You have exactly 3 tools:
 ## Device Selection
 
 - Always choose the device key from the `devices` list returned by search_skills().
+- Device-agnostic skills route through `devices.hub.*` (hub picks the target device).
 - Prefer `preferred_device` if present.
 - Never invent device keys.
 - Do NOT use offline-mode syntax like device.<SkillClass>.<method>(...) in online mode.
@@ -95,7 +97,7 @@ Calculator:
 - User: "Add 5 and 3"
   a) search_skills(query="calculator")
   b) python_exec(code="print(
-     devices.<device>.CalculatorSkill.add(a=5, b=3))")
+     devices.hub.CalculatorSkill.add(a=5, b=3))")
 
 Smart Home (turn on/off, lights, locks, media):
 - User: "Turn on the short lamp"
@@ -163,6 +165,31 @@ class DevicesProxy:
         self._device_cache = {normalize_device_name(d.name): d for d in devices}
         return self._device_cache
 
+    def _sort_group_devices(
+        self,
+        unique_devices: list[str],
+        devices: Dict[str, Device],
+        connected_device_ids: set[str],
+    ) -> list[str]:
+        """Sort group devices with connected ones first, then alphabetical."""
+
+        def _sort_key(d_name: str) -> tuple[bool, str]:
+            d_id = next(
+                (
+                    did
+                    for did, d in devices.items()
+                    if normalize_device_name(d.name) == d_name
+                ),
+                None,
+            )
+            if d_id:
+                d_obj = devices[d_id]
+                is_connected = d_obj.id in connected_device_ids
+                return (not is_connected, d_name)
+            return (True, d_name)
+
+        return sorted(unique_devices, key=_sort_key)
+
     async def search_skills(
         self,
         query: str = "",
@@ -228,10 +255,14 @@ class DevicesProxy:
                     "docstring": s.docstring or "",
                     "devices": [],
                     "device_ids": [],
+                    "device_agnostic": True,
                 }
 
             skill_groups[key]["devices"].append(device_name)
             skill_groups[key]["device_ids"].append(s.device_id)
+            skill_groups[key]["device_agnostic"] = (
+                skill_groups[key]["device_agnostic"] and bool(s.device_agnostic)
+            )
 
         # Format results
         results = []
@@ -239,35 +270,29 @@ class DevicesProxy:
 
         for key, group in sorted(skill_groups.items(), key=lambda x: x[0][0]):
             unique_devices = sorted(set(group["devices"]))
+            is_device_agnostic = bool(group.get("device_agnostic", False))
 
-            # Sort devices: connected first, then alphabetical
-            def _sort_key(d_name):
-                # Find device ID for this name (inefficient but safe for small N)
-                d_id = next(
-                    (
-                        did
-                        for did, d in devices.items()
-                        if normalize_device_name(d.name) == d_name
-                    ),
-                    None,
-                )
-                if d_id:
-                    d_obj = devices[d_id]
-                    is_connected = d_obj.id in connected_device_ids
-                    # False < True, so connected comes first.
-                    return (not is_connected, d_name)
-                return (True, d_name)
+            sorted_devices = self._sort_group_devices(
+                unique_devices=unique_devices,
+                devices=devices,
+                connected_device_ids=connected_device_ids,
+            )
 
-            sorted_devices = sorted(unique_devices, key=_sort_key)
-
-            device_sample = sorted_devices[:max_devices]
-            preferred_device = device_sample[0] if device_sample else None
+            if is_device_agnostic:
+                # Hide underlying device list from the model for device-agnostic
+                # skills. Calls should always go through devices.hub.
+                device_sample = [DEVICE_AGNOSTIC_KEY]
+                preferred_device = DEVICE_AGNOSTIC_KEY
+            else:
+                device_sample = sorted_devices[:max_devices]
+                preferred_device = device_sample[0] if device_sample else None
             path = group["path"]
             results.append(
                 {
                     "path": path,
                     "signature": group["signature"],
                     "summary": group["summary"],
+                    "device_agnostic": is_device_agnostic,
                     "devices": device_sample,
                     "device_count": len(sorted_devices),
                     # TODO: replace "preferred_device" with
@@ -362,6 +387,15 @@ class DevicesProxy:
         devices = await self._get_user_devices()
         normalized = normalize_device_name(device_name)
 
+        if normalized == DEVICE_AGNOSTIC_KEY:
+            return await self._execute_device_agnostic_skill(
+                devices=devices,
+                skill_name=skill_name,
+                method_name=method_name,
+                args=args,
+                kwargs=kwargs,
+            )
+
         device = devices.get(normalized)
         if not device:
             available = ", ".join(sorted(devices.keys()))
@@ -387,6 +421,81 @@ class DevicesProxy:
             raise TimeoutError(f"Device '{device_name}' did not respond in time")
         except RuntimeError as e:
             raise RuntimeError(f"Skill execution error: {e}")
+
+    async def _execute_device_agnostic_skill(
+        self,
+        devices: Dict[str, Device],
+        skill_name: str,
+        method_name: str,
+        args: List[Any],
+        kwargs: Dict[str, Any],
+    ) -> Any:
+        """Execute a device-agnostic skill via heartbeat-prioritized fallback."""
+        expiry_time = datetime.now(timezone.utc) - timedelta(
+            seconds=settings.skill_expiry_seconds
+        )
+        result = await self._db.execute(
+            select(Skill)
+            .where(Skill.device_id.in_([d.id for d in devices.values()]))
+            .where(Skill.class_name == skill_name)
+            .where(Skill.function_name == method_name)
+            .where(Skill.device_agnostic.is_(True))
+            .where(Skill.last_heartbeat > expiry_time)
+            .order_by(Skill.last_heartbeat.desc())
+        )
+        candidates = result.scalars().all()
+
+        if not candidates:
+            raise ValueError(
+                f"Device-agnostic skill '{skill_name}.{method_name}' not found."
+            )
+
+        candidate_device_ids: list[str] = []
+        seen: set[str] = set()
+        for skill in candidates:
+            if skill.device_id in seen:
+                continue
+            seen.add(skill.device_id)
+            candidate_device_ids.append(skill.device_id)
+
+        connected = [
+            d_id
+            for d_id in candidate_device_ids
+            if self._connection_manager.is_connected(d_id)
+        ]
+        if not connected:
+            raise ValueError(
+                f"Device-agnostic skill '{skill_name}.{method_name}' is unavailable: "
+                "no connected devices currently provide this skill."
+            )
+
+        errors: list[str] = []
+        for device_id in connected:
+            try:
+                return await self._connection_manager.send_skill_request(
+                    device_id=device_id,
+                    skill_name=skill_name,
+                    method_name=method_name,
+                    args=args,
+                    kwargs=kwargs,
+                    timeout=30.0,
+                )
+            except (TimeoutError, RuntimeError, ValueError) as exc:
+                device_key = next(
+                    (
+                        name
+                        for name, device in devices.items()
+                        if device.id == device_id
+                    ),
+                    device_id,
+                )
+                errors.append(f"{device_key}: {exc}")
+                continue
+
+        raise RuntimeError(
+            f"All fallback devices failed for '{skill_name}.{method_name}'. "
+            f"Attempts: {', '.join(errors)}"
+        )
 
     def __getattr__(self, device_name: str) -> "DeviceProxy":
         """Get a proxy for a specific device."""
@@ -658,6 +767,7 @@ class HubSkillService:
         # The hub itself is a control plane and should not be used as a target
         # device for spoke-originated runs.
         filtered_device_keys: list[str] = []
+        filtered_device_keys.append(DEVICE_AGNOSTIC_KEY)
         for key in sorted(devices.keys()):
             if key == "strawberry_hub" and requesting_device_key != "strawberry_hub":
                 continue
@@ -679,4 +789,5 @@ class HubSkillService:
             "IMPORTANT:\n"
             "- Never invent device names. Always pick a device from "
             "search_skills() results or from the list above.\n"
+            f"- For device-agnostic skills, use devices.{DEVICE_AGNOSTIC_KEY}.\n"
         )

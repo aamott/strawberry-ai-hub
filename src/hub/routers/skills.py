@@ -42,6 +42,7 @@ class SkillInfo(BaseModel):
     function_name: str
     signature: str
     docstring: Optional[str] = None
+    device_agnostic: bool = False
 
 
 class SkillRegisterRequest(BaseModel):
@@ -70,6 +71,7 @@ class SkillResponse(BaseModel):
     function_name: str
     signature: str
     docstring: Optional[str]
+    device_agnostic: bool
     last_heartbeat: datetime
 
 
@@ -102,6 +104,7 @@ async def register_skills(
             function_name=skill_info.function_name,
             signature=skill_info.signature,
             docstring=skill_info.docstring,
+            device_agnostic=skill_info.device_agnostic,
             last_heartbeat=now,
         )
         db.add(skill)
@@ -238,6 +241,7 @@ async def list_skills(
                 function_name=s.function_name,
                 signature=s.signature,
                 docstring=s.docstring,
+                device_agnostic=s.device_agnostic,
                 last_heartbeat=s.last_heartbeat,
             )
             for s in skills

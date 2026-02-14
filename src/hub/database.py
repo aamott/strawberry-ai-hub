@@ -60,6 +60,8 @@ class Skill(Base):
     function_name: Mapped[str] = mapped_column(String(255))
     signature: Mapped[str] = mapped_column(Text)
     docstring: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # True when the hub may route to any connected device that has this skill.
+    device_agnostic: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Status
     last_heartbeat: Mapped[datetime] = mapped_column(
@@ -212,8 +214,20 @@ async def init_db():
                 await conn.execute(
                     text("ALTER TABLE sessions ADD COLUMN last_mode_prompt VARCHAR(32)")
                 )
+
+            # Keep the skills schema in sync for installs created before
+            # device-agnostic routing support existed.
+            result = await conn.execute(text("PRAGMA table_info(skills)"))
+            skill_cols = {row[1] for row in result.fetchall()}
+            if "device_agnostic" not in skill_cols:
+                await conn.execute(
+                    text(
+                        "ALTER TABLE skills "
+                        "ADD COLUMN device_agnostic BOOLEAN NOT NULL DEFAULT 0"
+                    )
+                )
         except Exception:
-            logger.exception("Session schema migration check failed")
+            logger.exception("SQLite schema migration check failed")
             raise
 
 

@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from ..auth import create_access_token, get_current_user, get_user_id_from_token
 from ..config import settings
@@ -41,6 +42,8 @@ class DeviceResponse(BaseModel):
     is_active: bool
     last_seen: datetime | None = None
     created_at: datetime
+    skill_names: list[str] = []
+    skill_count: int = 0
 
 
 class DeviceTokenResponse(BaseModel):
@@ -225,7 +228,12 @@ async def get_my_devices(
     # Let's start strict: You only see YOUR devices.
     # Admins can use the separate admin router if they need a global view.
 
-    result = await db.execute(select(Device).where(Device.user_id == current_user.id))
+    # Eager-load skills to avoid N+1 queries when building the response.
+    result = await db.execute(
+        select(Device)
+        .where(Device.user_id == current_user.id)
+        .options(selectinload(Device.skills))
+    )
     devices_db = result.scalars().all()
 
     # Compute is_active based on WebSocket connection status
@@ -236,6 +244,8 @@ async def get_my_devices(
 
     for device in devices_db:
         is_connected = status_manager.is_connected(device.id)
+        # Deduplicate and sort skill class names for this device.
+        unique_skills = sorted({s.class_name for s in device.skills})
         devices.append(
             DeviceResponse(
                 id=device.id,
@@ -243,6 +253,8 @@ async def get_my_devices(
                 is_active=is_connected,
                 last_seen=device.last_seen,
                 created_at=device.created_at,
+                skill_names=unique_skills,
+                skill_count=len(unique_skills),
             )
         )
     return devices

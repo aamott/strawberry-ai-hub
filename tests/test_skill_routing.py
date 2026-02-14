@@ -1,10 +1,11 @@
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from hub.database import Device, Skill
-from hub.skill_service import HubSkillService
+from hub.skill_service import DEVICE_AGNOSTIC_KEY, HubSkillService
 
 
 @pytest.fixture
@@ -116,4 +117,106 @@ async def test_search_skills_prioritizes_connected_devices(
     # Note: search_skills returns normalized device names
     assert results[0]["preferred_device"] == "strawberry_spoke"
     assert results[0]["devices"][0] == "strawberry_spoke"
+
+
+@pytest.mark.asyncio
+async def test_search_skills_device_agnostic_uses_hub_device_key(
+    mock_db_session,
+    mock_connection_manager,
+):
+    """Device-agnostic skills should be exposed only via devices.hub."""
+    device_a = Device(id="d1", name="alpha", user_id="u1", is_active=True)
+    device_b = Device(id="d2", name="beta", user_id="u1", is_active=True)
+
+    devices_result = MagicMock()
+    devices_result.scalars.return_value.all.return_value = [device_a, device_b]
+
+    skills_result = MagicMock()
+    skills_result.scalars.return_value.all.return_value = [
+        Skill(
+            device_id="d1",
+            class_name="CalculatorSkill",
+            function_name="add",
+            signature="add(a: float, b: float) -> float",
+            docstring="Add two numbers",
+            device_agnostic=True,
+        ),
+        Skill(
+            device_id="d2",
+            class_name="CalculatorSkill",
+            function_name="add",
+            signature="add(a: float, b: float) -> float",
+            docstring="Add two numbers",
+            device_agnostic=True,
+        ),
+    ]
+
+    mock_db_session.execute.side_effect = [devices_result, skills_result]
+    mock_connection_manager.get_connected_devices.return_value = ["d1", "d2"]
+
+    service = HubSkillService(mock_db_session, "u1", mock_connection_manager)
+    results = await service.devices.search_skills("calculator")
+
+    assert len(results) == 1
+    assert results[0]["path"] == "CalculatorSkill.add"
+    assert results[0]["device_agnostic"] is True
+    assert results[0]["devices"] == [DEVICE_AGNOSTIC_KEY]
+    assert results[0]["preferred_device"] == DEVICE_AGNOSTIC_KEY
+
+
+@pytest.mark.asyncio
+async def test_execute_skill_hub_fallback_tries_next_device(
+    mock_db_session,
+    mock_connection_manager,
+):
+    """Hub routing should fail over to the next connected device."""
+    device_a = Device(id="d1", name="alpha", user_id="u1", is_active=True)
+    device_b = Device(id="d2", name="beta", user_id="u1", is_active=True)
+
+    devices_result = MagicMock()
+    devices_result.scalars.return_value.all.return_value = [device_a, device_b]
+
+    now = datetime.now(timezone.utc)
+    skills_result = MagicMock()
+    skills_result.scalars.return_value.all.return_value = [
+        Skill(
+            device_id="d1",
+            class_name="CalculatorSkill",
+            function_name="add",
+            signature="add(a: float, b: float) -> float",
+            docstring="Add two numbers",
+            device_agnostic=True,
+            last_heartbeat=now,
+        ),
+        Skill(
+            device_id="d2",
+            class_name="CalculatorSkill",
+            function_name="add",
+            signature="add(a: float, b: float) -> float",
+            docstring="Add two numbers",
+            device_agnostic=True,
+            last_heartbeat=now - timedelta(seconds=10),
+        ),
+    ]
+
+    mock_db_session.execute.side_effect = [devices_result, skills_result]
+    mock_connection_manager.is_connected.side_effect = lambda device_id: device_id in {
+        "d1",
+        "d2",
+    }
+    mock_connection_manager.send_skill_request = AsyncMock(
+        side_effect=[TimeoutError("timed out"), 3]
+    )
+
+    service = HubSkillService(mock_db_session, "u1", mock_connection_manager)
+    result = await service.devices.execute_skill(
+        device_name=DEVICE_AGNOSTIC_KEY,
+        skill_name="CalculatorSkill",
+        method_name="add",
+        args=[1, 2],
+        kwargs={},
+    )
+
+    assert result == 3
+    assert mock_connection_manager.send_skill_request.await_count == 2
 

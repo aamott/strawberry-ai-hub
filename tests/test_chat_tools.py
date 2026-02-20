@@ -368,24 +368,35 @@ async def test_chat_with_session_id_persists_messages(auth_client):
 
 
 @pytest.mark.asyncio
-async def test_chat_rejects_stream_with_session_id(auth_client):
-    """session_id cannot be used with stream=true in chat completions."""
+async def test_chat_stream_with_session_id_persists_messages(auth_client):
+    """stream=true with session_id should persist user and assistant messages."""
     session_resp = await auth_client.post("/sessions", json={})
     assert session_resp.status_code == 200
     session_id = session_resp.json()["id"]
 
-    response = await auth_client.post(
-        "/api/v1/chat/completions",
-        json={
-            "model": "gpt-4o-mini",
-            "messages": [{"role": "user", "content": "hello"}],
-            "stream": True,
-            "session_id": session_id,
-        },
-    )
+    async def mock_inference(messages, function_name, system=None, **kwargs):
+        return MockTensorZeroResponse(content_text="streamed assistant response")
 
-    assert response.status_code == 400
-    assert "session_id is not supported with stream=true" in response.text
+    with patch("hub.routers.chat.tz_inference", side_effect=mock_inference):
+        response = await auth_client.post(
+            "/api/v1/chat/completions",
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": "hello stream"}],
+                "enable_tools": True,
+                "stream": True,
+                "session_id": session_id,
+            },
+        )
+
+    assert response.status_code == 200
+
+    messages_resp = await auth_client.get(f"/sessions/{session_id}/messages")
+    assert messages_resp.status_code == 200
+    payload = messages_resp.json()
+    roles_and_content = [(m["role"], m["content"]) for m in payload["messages"]]
+    assert ("user", "hello stream") in roles_and_content
+    assert ("assistant", "streamed assistant response") in roles_and_content
 
 
 @pytest.mark.asyncio

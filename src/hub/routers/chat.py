@@ -211,11 +211,6 @@ async def chat_completions(
 
     session: Optional[Session] = None
     if request.session_id:
-        if request.stream:
-            raise HTTPException(
-                status_code=400,
-                detail="session_id is not supported with stream=true",
-            )
         session = await _get_session_for_user(db, request.session_id, device.user_id)
 
         latest_user_message = _extract_latest_user_message(request.messages)
@@ -228,6 +223,7 @@ async def chat_completions(
             device=device,
             db=db,
             manager=manager,
+            session=session,
         )
         return StreamingResponse(stream_iter, media_type="text/event-stream")
 
@@ -343,6 +339,7 @@ async def _stream_chat_completions(
     device: Device,
     db: AsyncSession,
     manager: ConnectionManager,
+    session: Optional[Session] = None,
 ) -> AsyncIterator[str]:
     """Stream a chat completion response as SSE events.
 
@@ -359,6 +356,8 @@ async def _stream_chat_completions(
     Yields:
         SSE data frames.
     """
+    final_assistant_content = ""
+
     try:
         if request.enable_tools:
             async for event in _agent_loop_events(
@@ -367,6 +366,8 @@ async def _stream_chat_completions(
                 db=db,
                 manager=manager,
             ):
+                if event.get("type") == "assistant_message":
+                    final_assistant_content = str(event.get("content") or "")
                 yield _sse(event)
         else:
             # Pass-through: stream the response token-by-token.
@@ -377,7 +378,17 @@ async def _stream_chat_completions(
             )
             for delta_event in collected["deltas"]:
                 yield _sse(delta_event)
-            yield _sse({"type": "assistant_message", "content": collected["full_text"]})
+            final_assistant_content = collected["full_text"]
+            yield _sse({"type": "assistant_message", "content": final_assistant_content})
+
+        if session is not None and final_assistant_content.strip():
+            await _append_session_message(
+                db,
+                session,
+                "assistant",
+                final_assistant_content,
+            )
+
         yield _sse({"type": "done"})
     except HTTPException as e:
         yield _sse({"type": "error", "error": str(e.detail)})

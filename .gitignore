@@ -15,3 +15,10 @@ data/
 
 # Environment variables
 .env
+.env.test
+.env.bak
+
+# Editor
+.vscode/
+.windsurf/
+.cursor/

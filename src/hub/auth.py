@@ -256,6 +256,7 @@ async def get_current_device(
             await db.commit()
         else:
             device.last_seen = datetime.now(timezone.utc)
+            await db.commit()
 
         return device
 

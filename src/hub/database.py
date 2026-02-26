@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, event, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -165,10 +165,35 @@ _session_factory = None
 
 
 def get_engine():
-    """Get or create the database engine."""
+    """Get or create the database engine.
+
+    For SQLite, configures WAL mode and a busy timeout to prevent
+    "database is locked" errors during concurrent async operations
+    (agent loop, WebSocket heartbeats, auth updates, etc.).
+    """
     global _engine
     if _engine is None:
-        _engine = create_async_engine(settings.database_url, echo=settings.debug)
+        is_sqlite = settings.database_url.startswith("sqlite")
+        _engine = create_async_engine(
+            settings.database_url,
+            echo=settings.debug,
+            # SQLite only supports one writer at a time, so limit
+            # the pool to avoid contention between connections.
+            pool_size=1 if is_sqlite else 5,
+            max_overflow=0 if is_sqlite else 10,
+        )
+
+        if is_sqlite:
+            # Enable WAL mode and busy timeout on every new
+            # connection so reads don't block writes and writes
+            # wait briefly instead of failing immediately.
+            @event.listens_for(_engine.sync_engine, "connect")
+            def _set_sqlite_pragmas(dbapi_conn, _connection_record):
+                cursor = dbapi_conn.cursor()
+                cursor.execute("PRAGMA journal_mode=WAL")
+                cursor.execute("PRAGMA busy_timeout=5000")
+                cursor.close()
+
     return _engine
 
 

@@ -623,6 +623,11 @@ async def _agent_loop_events(
             ):
                 did_empty_text_retry = True
                 messages.append({"role": "user", "content": _EMPTY_TEXT_NUDGE})
+                yield {
+                    "type": "injected_message",
+                    "role": "user",
+                    "content": _EMPTY_TEXT_NUDGE,
+                }
                 continue
 
             if content.strip():
@@ -649,16 +654,22 @@ async def _agent_loop_events(
 
         messages.append({"role": "assistant", "content": content})
         tool_output = "\n".join(tool_results)
+        injected_content = (
+            f"[Tool Results]\n{tool_output}\n\n"
+            "[Now respond naturally to the user"
+            " based on these results.]"
+        )
         messages.append(
             {
                 "role": "user",
-                "content": (
-                    f"[Tool Results]\n{tool_output}\n\n"
-                    "[Now respond naturally to the user"
-                    " based on these results.]"
-                ),
+                "content": injected_content,
             }
         )
+        yield {
+            "type": "injected_message",
+            "role": "user",
+            "content": injected_content,
+        }
         final_content = content
 
     if not (final_content or "").strip():

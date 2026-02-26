@@ -1,0 +1,78 @@
+{
+    "description": "Canonical wire-protocol payloads for v1. Hub Pydantic models must deserialize these without error.",
+    "skill_register_request": {
+        "skills": [
+            {
+                "class_name": "WeatherSkill",
+                "function_name": "get_current_weather",
+                "signature": "get_current_weather(location: str = '', units: str = '') -> Dict[str, Any]",
+                "docstring": "Get current weather with clear status.",
+                "device_agnostic": false
+            },
+            {
+                "class_name": "CalculatorSkill",
+                "function_name": "add",
+                "signature": "add(a: float, b: float) -> float",
+                "docstring": null,
+                "device_agnostic": true
+            }
+        ]
+    },
+    "skill_execute_request": {
+        "device_name": "living_room_pc",
+        "skill_name": "WeatherSkill",
+        "method_name": "get_current_weather",
+        "args": [],
+        "kwargs": {
+            "location": "Seattle"
+        }
+    },
+    "skill_execute_response_success": {
+        "success": true,
+        "result": {
+            "temperature": 72,
+            "conditions": "sunny"
+        },
+        "error": null
+    },
+    "skill_execute_response_failure": {
+        "success": false,
+        "result": null,
+        "error": "API key not configured"
+    },
+    "skill_search_response": {
+        "results": [
+            {
+                "path": "WeatherSkill.get_current_weather",
+                "signature": "get_current_weather(location: str = '') -> Dict[str, Any]",
+                "summary": "Get current weather with clear status.",
+                "devices": [
+                    "living_room_pc"
+                ],
+                "device_count": 1,
+                "is_local": false
+            }
+        ],
+        "total": 1
+    },
+    "ws_skill_request": {
+        "v": 1,
+        "type": "skill_request",
+        "request_id": "req-001",
+        "skill_name": "WeatherSkill",
+        "method_name": "get_current_weather",
+        "args": [],
+        "kwargs": {
+            "location": "Seattle"
+        }
+    },
+    "ws_skill_response": {
+        "v": 1,
+        "type": "skill_response",
+        "request_id": "req-001",
+        "success": true,
+        "result": {
+            "temperature": 72
+        }
+    }
+}

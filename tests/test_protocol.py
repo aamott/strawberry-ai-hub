@@ -15,9 +15,8 @@ from hub.utils import normalize_device_name
 # ── Normalization parity tests ──────────────────────────────────────────────
 
 FIXTURE_PATH = (
-    Path(__file__).resolve().parents[2]  # repo root
-    / "docs"
-    / "test-fixtures"
+    Path(__file__).resolve().parent  # tests/
+    / "fixtures"
     / "normalize_device_name.json"
 )
 

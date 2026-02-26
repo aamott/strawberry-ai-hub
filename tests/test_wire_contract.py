@@ -11,9 +11,8 @@ from pathlib import Path
 import pytest
 
 FIXTURE_PATH = (
-    Path(__file__).resolve().parents[2]  # repo root
-    / "docs"
-    / "test-fixtures"
+    Path(__file__).resolve().parent  # tests/
+    / "fixtures"
     / "wire_schema_v1.json"
 )
 

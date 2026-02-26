@@ -1,0 +1,73 @@
+{
+    "description": "Canonical test vectors for normalize_device_name(). Both Hub and Spoke implementations must produce identical output for each input.",
+    "cases": [
+        {
+            "input": "Living Room PC",
+            "expected": "living_room_pc"
+        },
+        {
+            "input": "John's Laptop",
+            "expected": "johns_laptop"
+        },
+        {
+            "input": "Büro-Computer",
+            "expected": "buro_computer"
+        },
+        {
+            "input": "my--device",
+            "expected": "my_device"
+        },
+        {
+            "input": "  Leading Spaces  ",
+            "expected": "leading_spaces"
+        },
+        {
+            "input": "UPPERCASE",
+            "expected": "uppercase"
+        },
+        {
+            "input": "already_normalized",
+            "expected": "already_normalized"
+        },
+        {
+            "input": "special!@#chars",
+            "expected": "specialchars"
+        },
+        {
+            "input": "multiple   spaces",
+            "expected": "multiple_spaces"
+        },
+        {
+            "input": "hyphen-separated-name",
+            "expected": "hyphen_separated_name"
+        },
+        {
+            "input": "MixedCase-With_Underscore",
+            "expected": "mixedcase_with_underscore"
+        },
+        {
+            "input": "café",
+            "expected": "cafe"
+        },
+        {
+            "input": "",
+            "expected": ""
+        },
+        {
+            "input": "123numeric",
+            "expected": "123numeric"
+        },
+        {
+            "input": "under_score",
+            "expected": "under_score"
+        },
+        {
+            "input": "Strawberry Dashboard",
+            "expected": "strawberry_dashboard"
+        },
+        {
+            "input": "Strawberry Spoke",
+            "expected": "strawberry_spoke"
+        }
+    ]
+}

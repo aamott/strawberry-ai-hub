@@ -31,6 +31,38 @@ uvicorn hub.main:app --reload
 python scripts/dev.py --port 8000
 ```
 
+## Folder Layout (How to Navigate)
+
+This repo is intentionally split into a Python backend ("Hub") and an optional React frontend. Most development work happens in `src/hub/` (backend) and `frontend/src/` (frontend source).
+
+```text
+ai-hub/
+  src/
+    hub/                 # FastAPI backend package (entrypoint, auth, DB, skills, prompts)
+      routers/           # API route modules grouped by domain (chat/devices/skills/sessions/websocket/etc.)
+  config/                # Runtime configuration (e.g. TensorZero gateway config)
+  frontend/              # Vite/React UI
+    src/                 # Frontend source (edit here)
+    dist/                # Built static assets (backend serves these when present)
+  scripts/               # Dev helpers (dev server wrapper, frontend build script, etc.)
+  tests/                 # Pytest suite + fixtures (wire schemas, protocol tests, routing tests)
+  logs/                  # Local runtime logs
+
+  hub.db                 # Local SQLite database (dev/runtime artifact)
+  pyproject.toml         # Python packaging + deps; defines the `strawberry-hub` entrypoint
+  ruff.toml              # Ruff lint configuration
+  .env*                  # Environment files (`.env.example` is the template)
+```
+
+Common "where do I change X?" pointers:
+
+- **Add/modify API endpoints**: `src/hub/routers/` (and wiring in `src/hub/main.py`)
+- **Skill routing / execution**: `src/hub/skill_service.py`
+- **Prompting logic**: `src/hub/prompt.py`
+- **Database / persistence**: `src/hub/database.py` (SQLite config defaults to `hub.db`)
+- **LLM gateway config**: `config/tensorzero.toml` + `src/hub/tensorzero_gateway.py`
+- **Frontend UI changes**: `frontend/src/` (then rebuild to refresh `frontend/dist/`)
+
 ## Frontend Setup
 
 The frontend is included in the repository as pre-built static files in the `frontend/dist` directory. The backend automatically serves these files when present.

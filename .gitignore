@@ -22,3 +22,7 @@ data/
 .vscode/
 .windsurf/
 .cursor/
+
+# other
+logs/hub.log*
+.fuse*

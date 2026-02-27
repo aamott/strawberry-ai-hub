@@ -225,6 +225,100 @@ relevant and proceed unless you NEED clarification."""
 
 
 # ---------------------------------------------------------------------------
+# HubNativeToolMode — native tool calling for the Hub
+# ---------------------------------------------------------------------------
+
+
+class HubNativeToolMode(ToolModeProvider):
+    """Tool mode where each skill method is a native tool.
+
+    The LLM calls skill methods directly (e.g.
+    ``WeatherSkill__get_current_weather(location="Seattle")``)
+    instead of writing Python code via ``python_exec``.
+
+    Discovery tools (``search_skills``, ``describe_function``)
+    remain available for finding the right tool.
+    """
+
+    def tool_header(self) -> str:
+        return """\
+## Available Tools
+
+Each skill method is registered as a native tool that you can call
+directly by name.  You also have two discovery helpers:
+1) search_skills(query) - Find skills by keyword.
+2) describe_function(path) - Get full signature and docstring."""
+
+    def discovery_section(self) -> str:
+        return """\
+## search_skills
+
+- search_skills(query) - Find skill functions by keyword.
+  Returns skill names, devices, and short descriptions.
+  Use this when you're not sure which tool to call.
+
+  Example:
+  ```
+  search_skills(query="weather")
+  ```"""
+
+    def describe_section(self) -> str:
+        return """\
+## describe_function
+
+- describe_function(path) - Get the full signature and docstring
+  for a skill method. Helpful when you need parameter details."""
+
+    def execution_section(self) -> str:
+        return """\
+## Calling Skills
+
+- Call skill tools directly by name. No code required.
+- Tool names follow the pattern: SkillClass__method_name
+  (double underscore between class and method).
+- Pass parameters as named arguments.
+- To route to a specific device, include the optional
+  `device` parameter. If omitted, the hub picks the best
+  available device automatically.
+
+Example:
+  WeatherSkill__get_current_weather(
+      location="San Francisco, CA",
+      device="living_room_pc"
+  )"""
+
+    def examples_section(self) -> str:
+        return """\
+## Examples
+
+Weather:
+- User: "What's the weather in San Francisco?"
+  a) search_skills(query="weather")
+  b) WeatherSkill__get_current_weather(
+         location="San Francisco, CA")
+
+Multi-device:
+- User: "Turn on the kitchen lights"
+  a) search_skills(query="turn on light")
+  b) HomeAssistantSkill__HassTurnOn(
+         name="Kitchen Light",
+         device="home_server")"""
+
+    def rules_section(self) -> str:
+        return """\
+## Rules
+
+1. Call tools directly — do NOT write code or use python_exec.
+2. After a tool call completes, always give a natural-language
+   response to the user.
+3. Do NOT say "I can't" until you have searched for skills.
+4. If a tool call fails, check describe_function for correct
+   parameter names and types, then retry.
+5. For smart-home commands, look for HomeAssistantSkill tools.
+   Pass the device/entity name as the 'name' parameter."""
+
+
+# ---------------------------------------------------------------------------
 # Provider registry
 # ---------------------------------------------------------------------------
 
@@ -235,7 +329,7 @@ def get_tool_mode_provider(name: str = "python_exec") -> ToolModeProvider:
     """Get a tool mode provider by name (singleton).
 
     Args:
-        name: Tool mode name. Currently: ``"python_exec"``.
+        name: Tool mode name (``"python_exec"`` or ``"native"``).
 
     Returns:
         ToolModeProvider instance.
@@ -246,10 +340,12 @@ def get_tool_mode_provider(name: str = "python_exec") -> ToolModeProvider:
     if name not in _PROVIDERS:
         if name == "python_exec":
             _PROVIDERS[name] = HubPythonExecToolMode()
+        elif name == "native":
+            _PROVIDERS[name] = HubNativeToolMode()
         else:
             raise ValueError(
                 f"Unknown tool mode: {name!r}. "
-                f"Available: {list(_PROVIDERS.keys()) or ['python_exec']}"
+                "Available: ['python_exec', 'native']"
             )
     return _PROVIDERS[name]
 

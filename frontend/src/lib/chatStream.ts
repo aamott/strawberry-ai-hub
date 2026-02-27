@@ -34,6 +34,9 @@ export interface HubChatStreamParams {
   messages: HubChatMessage[];
   enable_tools: boolean;
   model?: string;
+  /** "python_exec" (default) or "native". Locked after first message. */
+  tool_mode?: string;
+  session_id?: string;
 }
 
 function getAuthHeader(): string | undefined {
@@ -59,6 +62,8 @@ export async function* streamHubChatCompletion(
       messages: params.messages,
       enable_tools: params.enable_tools,
       stream: true,
+      ...(params.tool_mode ? { tool_mode: params.tool_mode } : {}),
+      ...(params.session_id ? { session_id: params.session_id } : {}),
     }),
   });
 

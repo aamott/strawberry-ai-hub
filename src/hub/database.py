@@ -97,6 +97,13 @@ class Session(Base):
     # conversations switch between Hub (online) and Spoke (offline) execution
     last_mode_prompt: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
 
+    # Tool mode lock: "python_exec" or "native".
+    # Set on the first message and immutable for the session lifetime.
+    # None means use the default (python_exec).
+    tool_mode: Mapped[Optional[str]] = mapped_column(
+        String(32), nullable=True, default=None
+    )
+
     # Status
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
@@ -238,6 +245,14 @@ async def init_db():
             if "last_mode_prompt" not in existing_cols:
                 await conn.execute(
                     text("ALTER TABLE sessions ADD COLUMN last_mode_prompt VARCHAR(32)")
+                )
+
+            if "tool_mode" not in existing_cols:
+                await conn.execute(
+                    text(
+                        "ALTER TABLE sessions "
+                        "ADD COLUMN tool_mode VARCHAR(32)"
+                    )
                 )
 
             # Keep the skills schema in sync for installs created before

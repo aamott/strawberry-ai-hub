@@ -47,12 +47,17 @@ class ChatMessage(BaseModel):
     name: Optional[str] = None
 
 
+_VALID_TOOL_MODES = {"python_exec", "native"}
+
+
 class ChatCompletionRequest(BaseModel):
     """OpenAI-compatible chat completion request with tool execution control.
 
     Attributes:
         enable_tools: If True, Hub runs agent loop and executes tools.
                      If False, Hub just passes through to LLM (Spoke handles tools).
+        tool_mode: ``"python_exec"`` (default) or ``"native"``.
+            Locked after the first message in a session.
     """
 
     model: str = "gpt-4o-mini"
@@ -62,6 +67,7 @@ class ChatCompletionRequest(BaseModel):
     stream: bool = False
     enable_tools: bool = False
     session_id: Optional[str] = None
+    tool_mode: Optional[str] = None
 
 
 class ChatChoice(BaseModel):
@@ -154,7 +160,37 @@ async def _get_session_for_user(
     return session
 
 
-def _extract_latest_user_message(messages: List[ChatMessage]) -> Optional[str]:
+def _resolve_tool_mode(
+    request: ChatCompletionRequest,
+    session: Optional[Session],
+) -> str:
+    """Determine the effective tool mode for this request.
+
+    If the session already has a locked ``tool_mode``, that wins.
+    Otherwise the request's ``tool_mode`` is used (defaulting to
+    ``"python_exec"``).  The resolved mode is written back onto
+    the session so subsequent messages are locked in.
+
+    Returns:
+        ``"python_exec"`` or ``"native"``.
+    """
+    if session and session.tool_mode:
+        return session.tool_mode
+
+    requested = request.tool_mode or "python_exec"
+    if requested not in _VALID_TOOL_MODES:
+        requested = "python_exec"
+
+    # Lock the mode onto the session
+    if session is not None:
+        session.tool_mode = requested
+
+    return requested
+
+
+def _extract_latest_user_message(
+    messages: List[ChatMessage],
+) -> Optional[str]:
     """Extract the latest user message content from a chat request."""
     for message in reversed(messages):
         if message.role == "user" and message.content.strip():
@@ -203,19 +239,31 @@ async def chat_completions(
     When enable_tools=False (default), Hub just passes through to LLM.
     """
     logger.info(
-        "[Chat] Received request: enable_tools=%s stream=%s messages=%s",
+        "[Chat] Received request: enable_tools=%s stream=%s messages=%s tool_mode=%s",
         request.enable_tools,
         request.stream,
         len(request.messages),
+        request.tool_mode,
     )
 
     session: Optional[Session] = None
     if request.session_id:
-        session = await _get_session_for_user(db, request.session_id, device.user_id)
+        session = await _get_session_for_user(
+            db, request.session_id, device.user_id
+        )
 
-        latest_user_message = _extract_latest_user_message(request.messages)
+        latest_user_message = _extract_latest_user_message(
+            request.messages
+        )
         if latest_user_message:
-            await _append_session_message(db, session, "user", latest_user_message)
+            await _append_session_message(
+                db, session, "user", latest_user_message
+            )
+
+    # Resolve and lock tool mode for this session
+    tool_mode = _resolve_tool_mode(request, session)
+    if session and session.tool_mode:
+        await db.commit()
 
     if request.stream:
         stream_iter = _stream_chat_completions(
@@ -224,12 +272,20 @@ async def chat_completions(
             db=db,
             manager=manager,
             session=session,
+            tool_mode=tool_mode,
         )
-        return StreamingResponse(stream_iter, media_type="text/event-stream")
+        return StreamingResponse(
+            stream_iter, media_type="text/event-stream"
+        )
 
     if request.enable_tools:
-        logger.info("[Chat] Routing to agent loop (enable_tools=True)")
-        response = await _run_agent_loop(request, device, db, manager)
+        logger.info(
+            "[Chat] Routing to agent loop (enable_tools=True, tool_mode=%s)",
+            tool_mode,
+        )
+        response = await _run_agent_loop(
+            request, device, db, manager, tool_mode=tool_mode
+        )
     else:
         logger.info("[Chat] Routing to pass-through (enable_tools=False)")
         response = await _call_tensorzero(request, use_tools=False)
@@ -340,18 +396,14 @@ async def _stream_chat_completions(
     db: AsyncSession,
     manager: ConnectionManager,
     session: Optional[Session] = None,
+    tool_mode: str = "python_exec",
 ) -> AsyncIterator[str]:
     """Stream a chat completion response as SSE events.
 
-    Streams token-level ``content_delta`` events for the final LLM response
-    so the UI can display text as it is generated. Tool call events
-    (``tool_call_started``, ``tool_call_result``) are emitted non-streaming
-    since we need the full response to detect tool calls.
-
-    Args:
-        request: Chat completion request.
-        device: Authenticated device.
-        db: Database session.
+    Streams token-level ``content_delta`` events for the final LLM
+    response so the UI can display text as it is generated.  Tool call
+    events (``tool_call_started``, ``tool_call_result``) are emitted
+    non-streaming since we need the full response to detect tool calls.
 
     Yields:
         SSE data frames.
@@ -365,6 +417,7 @@ async def _stream_chat_completions(
                 device=device,
                 db=db,
                 manager=manager,
+                tool_mode=tool_mode,
             ):
                 if event.get("type") == "assistant_message":
                     final_assistant_content = str(event.get("content") or "")
@@ -409,13 +462,15 @@ def _classify_block_type(block: Any) -> str:
 def _parse_response_blocks(
     response: Any,
     iteration: int = 0,
-) -> tuple[str, list[dict[str, Any]], str]:
-    """Extract text, tool calls, and model from a response.
+) -> tuple[str, list[dict[str, Any]], str, list[Any]]:
+    """Extract text, tool calls, model, and raw blocks from a response.
 
     Logs a warning when both text and tool calls are empty.
 
     Returns:
-        Tuple of (content, tool_calls, model_used).
+        Tuple of (content, tool_calls, model_used, raw_blocks).
+        ``raw_blocks`` is the original content list from the response,
+        needed for native-mode message history.
     """
     blocks = _get_content_blocks(response)
     block_types = [_classify_block_type(b) for b in blocks]
@@ -438,7 +493,7 @@ def _parse_response_blocks(
             block_types,
         )
 
-    return content, tool_calls, model_used
+    return content, tool_calls, model_used, blocks
 
 
 async def _execute_single_tool(
@@ -556,6 +611,23 @@ async def _execute_tool_calls(
     }
 
 
+def _handle_no_tool_calls(
+    messages: list[dict[str, Any]],
+    content: str,
+    had_tool_execution: bool,
+    already_retried: bool,
+) -> str:
+    """Decide what to do when the model returns no tool calls.
+
+    Returns ``"retry"`` if we should nudge the model, or ``"done"``
+    to accept the current content.
+    """
+    if _should_retry_empty_text(had_tool_execution, content, already_retried):
+        messages.append({"role": "user", "content": _EMPTY_TEXT_NUDGE})
+        return "retry"
+    return "done"
+
+
 def _should_retry_empty_text(
     had_tool_execution: bool,
     content: str,
@@ -572,17 +644,177 @@ _EMPTY_TEXT_NUDGE = (
 )
 
 
+def _inject_tool_results(
+    messages: list[dict[str, Any]],
+    tool_mode: str,
+    content: str,
+    raw_blocks: list[Any],
+    tool_results: list[str],
+    tool_calls: list[dict[str, Any]],
+    per_tool_results: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Append assistant + tool-result messages to the conversation.
+
+    Returns an ``injected_message`` event dict for the caller to yield.
+    """
+    if tool_mode == "native":
+        messages.append({"role": "assistant", "content": raw_blocks})
+        blocks = _build_native_tool_result_blocks(tool_calls, per_tool_results)
+        messages.append({"role": "user", "content": blocks})
+        return {
+            "type": "injected_message",
+            "role": "user",
+            "content": json.dumps(blocks, default=str),
+        }
+
+    messages.append({"role": "assistant", "content": content})
+    tool_output = "\n".join(tool_results)
+    injected = (
+        f"[Tool Results]\n{tool_output}\n\n"
+        "[Now respond naturally to the user based on these results.]"
+    )
+    messages.append({"role": "user", "content": injected})
+    return {
+        "type": "injected_message",
+        "role": "user",
+        "content": injected,
+    }
+
+
+def _build_native_tool_result_blocks(
+    tool_calls: list[dict[str, Any]],
+    per_tool_results: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Build TensorZero ``tool_result`` content blocks for native mode.
+
+    Each block maps a tool call ID to its result string, matching the
+    format expected by TensorZero for multi-turn tool-use conversations.
+
+    Args:
+        tool_calls: Tool call dicts (with ``id`` and ``name``).
+        per_tool_results: Corresponding ``tool_call_result`` events.
+
+    Returns:
+        List of ``{"type": "tool_result", "id": ..., "name": ..., "result": ...}``
+        dicts.
+    """
+    result_by_id: dict[str, dict[str, Any]] = {}
+    for evt in per_tool_results:
+        tcid = evt.get("tool_call_id") or ""
+        result_by_id[tcid] = evt
+
+    blocks: list[dict[str, Any]] = []
+    for tc in tool_calls:
+        tcid = str(tc.get("id") or "")
+        evt = result_by_id.get(tcid, {})
+        result_str = str(evt.get("result") or evt.get("error") or "(no output)")
+        blocks.append({
+            "type": "tool_result",
+            "id": tcid,
+            "name": tc.get("name") or "",
+            "result": result_str,
+        })
+    return blocks
+
+
+async def _build_native_tz_kwargs(
+    skill_service: Any,
+    tool_mode: str,
+) -> dict[str, Any]:
+    """Build extra TensorZero kwargs for native tool mode.
+
+    Returns an empty dict for python_exec mode, or ``additional_tools``
+    and ``allowed_tools`` for native mode.
+    """
+    if tool_mode != "native":
+        return {}
+
+    tool_schemas, tool_names = (
+        await skill_service.get_native_tool_schemas()
+    )
+    if not tool_schemas:
+        return {}
+
+    return {
+        "additional_tools": tool_schemas,
+        "allowed_tools": (
+            ["search_skills", "describe_function"] + tool_names
+        ),
+    }
+
+
+async def _finalize_agent_content(
+    content: str,
+    had_tool_exec: bool,
+    tool_mode: str,
+    messages: list[dict[str, Any]],
+    system_prompt: str,
+    tz_kwargs: dict[str, Any],
+    model_used: str,
+) -> str:
+    """Ensure we have text content; run a fallback inference if needed."""
+    if (content or "").strip():
+        return content
+
+    # Native mode: extra inference with tool_choice=none
+    if had_tool_exec and tool_mode == "native":
+        fb = await _native_text_fallback(messages, system_prompt, tz_kwargs)
+        if fb.strip():
+            return fb
+
+    logger.warning(
+        "[Agent Loop] Empty model response after tool execution loop. variant=%s",
+        model_used,
+    )
+    return (
+        "I didn't get a usable response from the model"
+        " (empty content blocks). Please try again."
+    )
+
+
+async def _native_text_fallback(
+    messages: list[dict[str, Any]],
+    system_prompt: str,
+    tz_kwargs: dict[str, Any],
+) -> str:
+    """Force-generate a text summary after a native tool loop.
+
+    Appends a nudge message and calls inference with
+    ``tool_choice='none'`` so the model must produce text.
+    """
+    logger.debug("[Agent Loop][native] Running text fallback inference")
+    messages.append({"role": "user", "content": _EMPTY_TEXT_NUDGE})
+    fallback_kwargs = dict(tz_kwargs)
+    fallback_kwargs["tool_choice"] = "none"
+    try:
+        response = await tz_inference(
+            messages=messages,
+            function_name="chat",
+            system=system_prompt,
+            **fallback_kwargs,
+        )
+        content, _, _, _ = _parse_response_blocks(response)
+        return content
+    except Exception:
+        logger.exception("[Agent Loop][native] Text fallback failed")
+        return ""
+
+
 async def _agent_loop_events(
     request: ChatCompletionRequest,
     device: Device,
     db: AsyncSession,
     manager: ConnectionManager,
+    tool_mode: str = "python_exec",
 ) -> AsyncIterator[dict[str, Any]]:
     """Run agent loop and yield structured events.
 
     This is the shared implementation used by both:
     - streaming SSE responses
     - classic JSON responses (non-streaming)
+
+    Args:
+        tool_mode: ``"python_exec"`` or ``"native"``.
     """
     from ..skill_service import HubSkillService
 
@@ -594,10 +826,21 @@ async def _agent_loop_events(
 
     messages: List[Dict[str, Any]] = []
     system_prompt = await skill_service.get_system_prompt(
-        requesting_device_key=normalize_device_name(device.name or "")
+        requesting_device_key=normalize_device_name(
+            device.name or ""
+        ),
+        tool_mode=tool_mode,
     )
-    messages.extend(_normalize_messages(request.messages, include_tool_call_id=False))
+    messages.extend(
+        _normalize_messages(
+            request.messages, include_tool_call_id=False
+        )
+    )
     max_iterations = settings.agent_max_iterations
+
+    tz_kwargs = await _build_native_tz_kwargs(
+        skill_service, tool_mode
+    )
 
     final_content = ""
     model_used = "unknown"
@@ -610,19 +853,20 @@ async def _agent_loop_events(
             messages=messages,
             function_name="chat",
             system=system_prompt,
+            **tz_kwargs,
         )
 
-        content, tool_calls, model_used = _parse_response_blocks(
+        content, tool_calls, model_used, raw_blocks = _parse_response_blocks(
             response, iteration=iteration
         )
 
         # No tool calls → final text response (or empty-text retry).
         if not tool_calls:
-            if _should_retry_empty_text(
-                had_any_tool_execution, content, did_empty_text_retry
-            ):
+            action = _handle_no_tool_calls(
+                messages, content, had_any_tool_execution, did_empty_text_retry,
+            )
+            if action == "retry":
                 did_empty_text_retry = True
-                messages.append({"role": "user", "content": _EMPTY_TEXT_NUDGE})
                 yield {
                     "type": "injected_message",
                     "role": "user",
@@ -638,6 +882,7 @@ async def _agent_loop_events(
 
         # Execute tool calls via helper generator.
         seen_keys: set[str] = set()
+        per_tool_results: list[dict[str, Any]] = []
         async for event in _execute_tool_calls(
             tool_calls,
             skill_service,
@@ -649,38 +894,22 @@ async def _agent_loop_events(
                 tool_results = event["results"]
                 if event["had_execution"]:
                     had_any_tool_execution = True
+            elif event["type"] == "tool_call_result":
+                per_tool_results.append(event)
+                yield event
             else:
                 yield event
 
-        messages.append({"role": "assistant", "content": content})
-        tool_output = "\n".join(tool_results)
-        injected_content = (
-            f"[Tool Results]\n{tool_output}\n\n"
-            "[Now respond naturally to the user"
-            " based on these results.]"
+        yield _inject_tool_results(
+            messages, tool_mode, content, raw_blocks,
+            tool_results, tool_calls, per_tool_results,
         )
-        messages.append(
-            {
-                "role": "user",
-                "content": injected_content,
-            }
-        )
-        yield {
-            "type": "injected_message",
-            "role": "user",
-            "content": injected_content,
-        }
         final_content = content
 
-    if not (final_content or "").strip():
-        logger.warning(
-            "[Agent Loop] Empty model response after tool execution loop. variant=%s",
-            model_used,
-        )
-        final_content = (
-            "I didn't get a usable response from the model"
-            " (empty content blocks). Please try again."
-        )
+    final_content = await _finalize_agent_content(
+        final_content, had_any_tool_execution, tool_mode,
+        messages, system_prompt, tz_kwargs, model_used,
+    )
 
     yield {
         "type": "assistant_message",
@@ -699,6 +928,7 @@ async def _run_agent_loop(
     device: Device,
     db: AsyncSession,
     manager: ConnectionManager,
+    tool_mode: str = "python_exec",
 ) -> ChatCompletionResponse:
     """Run agent loop with tool execution.
 
@@ -718,6 +948,7 @@ async def _run_agent_loop(
         device=device,
         db=db,
         manager=manager,
+        tool_mode=tool_mode,
     ):
         if not isinstance(event, dict):
             continue

@@ -4,6 +4,8 @@ import { ChatArea } from "@/components/chat/ChatArea";
 import { useToast } from "@/components/ui/use-toast";
 import { useChatSessions } from "@/contexts/ChatSessionContext";
 import { streamHubChatCompletion, type HubChatMessage } from "@/lib/chatStream";
+import { Button } from "@/components/ui/button";
+import { Download } from "lucide-react";
 
 interface Message {
     id: number | string;
@@ -68,11 +70,46 @@ export function Chat() {
         activeSessionId,
         createSession,
         fetchSessions,
+        sessions,
     } = useChatSessions();
 
     const [messages, setMessages] = useState<Message[]>([]);
     const [isLoading, setIsLoading] = useState(false);
+    const [toolMode, setToolMode] = useState("python_exec");
     const { toast } = useToast();
+
+    // Sync tool mode from the active session (locked if set).
+    const activeSession = sessions.find(s => s.id === activeSessionId);
+    const sessionToolMode = activeSession?.tool_mode;
+    const modeLocked = !!sessionToolMode;
+    const effectiveToolMode = sessionToolMode ?? toolMode;
+
+    const downloadChat = () => {
+        if (messages.length === 0) return;
+
+        const title = activeSession?.title || "chat";
+        let mdContent = `# ${title}\n\n`;
+        for (const msg of messages) {
+            if (msg.role === "user") {
+                mdContent += `**User:**\n${msg.content}\n\n`;
+            } else if (msg.role === "assistant") {
+                mdContent += `**Assistant:**\n${msg.content}\n\n`;
+            } else if (msg.role === "tool") {
+                mdContent += `**Tool:**\n${msg.content}\n\n`;
+            }
+        }
+
+        const blob = new Blob([mdContent], { type: "text/markdown" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        const safeTitle = title.replace(/\s+/g, '-').toLowerCase();
+        a.download = `${safeTitle}-${Date.now()}.md`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
 
     const fetchMessages = useCallback(async (sessionId: string) => {
         try {
@@ -140,6 +177,8 @@ export function Chat() {
                 model: "gpt-4o-mini",
                 messages: history,
                 enable_tools: true,
+                tool_mode: effectiveToolMode,
+                session_id: currentSessionId,
             })) {
                 if (event.type === "tool_call_started") {
                     setMessages((prev) => [
@@ -225,12 +264,28 @@ export function Chat() {
     };
 
     return (
-        <div className="flex h-full overflow-hidden bg-background">
+        <div className="flex h-full overflow-hidden bg-background relative">
+            {messages.length > 0 && (
+                <div className="absolute top-4 right-4 z-10 md:right-8 lg:right-12">
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={downloadChat}
+                        className="gap-2 bg-background/80 backdrop-blur-sm"
+                    >
+                        <Download className="h-4 w-4" />
+                        Download Chat
+                    </Button>
+                </div>
+            )}
             <div className="flex-1 flex flex-col min-w-0 h-full">
                 <ChatArea
                     messages={messages}
                     onSend={handleSendMessage}
                     isLoading={isLoading}
+                    toolMode={effectiveToolMode}
+                    onToolModeChange={setToolMode}
+                    modeLocked={modeLocked}
                 />
             </div>
         </div>

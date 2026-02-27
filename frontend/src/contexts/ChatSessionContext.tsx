@@ -17,6 +17,8 @@ export interface Session {
     title?: string;
     last_activity: string;
     message_count: number;
+    /** Locked tool mode: "python_exec" or "native". */
+    tool_mode?: string;
 }
 
 export type SortBy = "last_activity" | "created" | "alpha";

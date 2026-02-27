@@ -516,12 +516,19 @@ class HubSkillService:
                 result = await self._execute_python(code)
                 return result
 
+            elif "__" in tool_name:
+                # Native tool mode: SkillClass__method_name
+                return await self._execute_native_tool(
+                    tool_name, arguments
+                )
+
             else:
                 # Dynamic skill execution fallback.
-                # Some model variants incorrectly call skill methods directly as tools
-                # (e.g., `get_current_weather(...)`). When that happens, we attempt to
-                # map the tool name to a registered Skill row and route it via WebSocket.
-                return await self._execute_dynamic_skill_tool(tool_name, arguments)
+                # Some model variants incorrectly call skill methods
+                # directly as tools (e.g., `get_current_weather(...)`).
+                return await self._execute_dynamic_skill_tool(
+                    tool_name, arguments
+                )
 
         except Exception as e:
             logger.error(f"Tool execution error: {e}")
@@ -647,7 +654,181 @@ class HubSkillService:
 
         return await execute_with_asteval(code, self.devices)
 
-    async def get_system_prompt(self, requesting_device_key: str) -> str:
+    async def _execute_native_tool(
+        self,
+        tool_name: str,
+        arguments: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Execute a native tool call (``SkillClass__method_name``).
+
+        Parses the tool name, extracts the optional ``device``
+        routing parameter from the arguments, and dispatches to
+        the appropriate device via :class:`DevicesProxy`.
+
+        Args:
+            tool_name: Tool name in ``Class__method`` format.
+            arguments: Tool arguments (may include ``device``).
+
+        Returns:
+            Dict with ``"result"`` or ``"error"`` key.
+        """
+        from .tool_schema import parse_tool_name
+
+        try:
+            class_name, method_name = parse_tool_name(tool_name)
+        except ValueError:
+            return {"error": f"Invalid native tool name: {tool_name}"}
+
+        # Pop the synthetic device routing parameter
+        args = dict(arguments or {})
+        device_name = args.pop("device", None)
+
+        if device_name:
+            device_name = normalize_device_name(device_name)
+        else:
+            # Auto-route: find the best device for this skill
+            device_name = await self._resolve_device_for_skill(
+                class_name, method_name
+            )
+
+        if not device_name:
+            return {
+                "error": (
+                    f"No device found with skill "
+                    f"{class_name}.{method_name}. "
+                    "Try search_skills to find available skills."
+                )
+            }
+
+        logger.info(
+            "[Hub Native Tool] %s -> devices.%s.%s.%s(%s)",
+            tool_name,
+            device_name,
+            class_name,
+            method_name,
+            args,
+        )
+
+        try:
+            result = await self.devices.execute_skill(
+                device_name=device_name,
+                skill_name=class_name,
+                method_name=method_name,
+                args=[],
+                kwargs=args,
+            )
+            return {"result": str(result) if result is not None else "(no output)"}
+        except Exception as e:
+            logger.error(
+                "[Hub Native Tool] Failed %s on %s: %s",
+                tool_name,
+                device_name,
+                e,
+            )
+            return {"error": f"{class_name}.{method_name} failed: {e}"}
+
+    async def _resolve_device_for_skill(
+        self,
+        class_name: str,
+        method_name: str,
+    ) -> Optional[str]:
+        """Find the best device to handle a skill call.
+
+        Prefers connected devices, then falls back to any device
+        with the skill registered and not expired.
+
+        Returns:
+            Normalized device name, or ``None`` if no match.
+        """
+        expiry_time = datetime.now(timezone.utc) - timedelta(
+            seconds=settings.skill_expiry_seconds
+        )
+
+        stmt = (
+            select(Skill, Device)
+            .join(Device, Skill.device_id == Device.id)
+            .where(Device.user_id == self.user_id)
+            .where(Skill.class_name == class_name)
+            .where(Skill.function_name == method_name)
+            .where(Skill.last_heartbeat > expiry_time)
+        )
+        result = await self.db.execute(stmt)
+        matches = result.all()
+
+        if not matches:
+            return None
+
+        # Check for device-agnostic skills first
+        for skill, device in matches:
+            if skill.device_agnostic:
+                return DEVICE_AGNOSTIC_KEY
+
+        # Prefer connected devices
+        connected_ids: set[str] = set()
+        if self.connection_manager:
+            connected_ids = set(
+                self.connection_manager.get_connected_devices()
+            )
+
+        def _sort_key(match):
+            skill, device = match
+            return (
+                device.id not in connected_ids,
+                normalize_device_name(device.name),
+            )
+
+        matches.sort(key=_sort_key)
+        _, best_device = matches[0]
+        return normalize_device_name(best_device.name)
+
+    async def get_native_tool_schemas(
+        self,
+        limit: int = 30,
+    ) -> tuple[list[Dict[str, Any]], list[str]]:
+        """Build native tool schemas for all registered skills.
+
+        Queries the Skill DB and converts each unique
+        ``(class_name, function_name)`` into a TensorZero-compatible
+        tool definition.
+
+        Args:
+            limit: Maximum number of tool schemas to generate.
+
+        Returns:
+            Tuple of ``(tool_schemas, tool_names)``.
+        """
+        from .tool_schema import build_all_tool_schemas
+
+        expiry_time = datetime.now(timezone.utc) - timedelta(
+            seconds=settings.skill_expiry_seconds
+        )
+
+        stmt = (
+            select(Skill)
+            .join(Device, Skill.device_id == Device.id)
+            .where(Device.user_id == self.user_id)
+            .where(Skill.last_heartbeat > expiry_time)
+        )
+        result = await self.db.execute(stmt)
+        rows = result.scalars().all()
+
+        skills = [
+            {
+                "class_name": r.class_name,
+                "function_name": r.function_name,
+                "signature": r.signature,
+                "docstring": r.docstring,
+            }
+            for r in rows
+        ]
+
+        return build_all_tool_schemas(skills, limit=limit)
+
+    async def get_system_prompt(
+        self,
+        requesting_device_key: str,
+        tool_mode: str = "python_exec",
+    ) -> str:
         """Get the system prompt for online mode.
 
         Delegates to :func:`prompt.build_system_prompt` which composes:
@@ -677,4 +858,8 @@ class HubSkillService:
             else None
         )
 
-        return build_hub_prompt(device_keys, custom_prompt=custom)
+        return build_hub_prompt(
+            device_keys,
+            custom_prompt=custom,
+            tool_mode=tool_mode,
+        )

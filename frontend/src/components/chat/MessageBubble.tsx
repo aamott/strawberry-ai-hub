@@ -2,7 +2,7 @@ import type { ComponentProps } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
-import { Copy, Bot, User, Wrench } from "lucide-react";
+import { Copy, Bot, User, Wrench, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface MessageBubbleProps {
@@ -17,7 +17,7 @@ const styles = {
         isUser ? "justify-end" : "justify-start"
     ),
     bubbleWrapper: (isUser: boolean) => cn(
-        "flex max-w-[85%] md:max-w-[80%] gap-2", 
+        "flex max-w-[85%] md:max-w-[80%] gap-2",
         isUser ? "flex-row-reverse" : "flex-row"
     ),
     avatar: (isUser: boolean) => cn(
@@ -33,7 +33,8 @@ const styles = {
     prose: "prose prose-sm dark:prose-invert max-w-none break-words",
     codeBlockWrapper: "relative rounded-md bg-muted p-2 my-2 font-mono text-xs overflow-x-auto max-w-full",
     inlineCode: "bg-muted px-1.5 py-0.5 rounded text-xs",
-    copyButton: "absolute -bottom-8 right-0 opacity-0 group-hover:opacity-100 transition-opacity h-6 w-6"
+    actionContainer: "absolute -bottom-8 right-0 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1",
+    actionButton: "h-6 w-6"
 };
 
 export function MessageBubble({ role, content }: MessageBubbleProps) {
@@ -42,6 +43,18 @@ export function MessageBubble({ role, content }: MessageBubbleProps) {
 
     const copyToClipboard = () => {
         navigator.clipboard.writeText(content);
+    };
+
+    const downloadSnippet = () => {
+        const blob = new Blob([content], { type: "text/markdown" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `message-${Date.now()}.md`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
     };
 
     return (
@@ -94,15 +107,27 @@ export function MessageBubble({ role, content }: MessageBubbleProps) {
                         </ReactMarkdown>
                     </div>
 
-                    {/* Copy Button (only visible on hover) */}
-                    <Button
-                        variant="ghost"
-                        size="icon"
-                        className={styles.copyButton}
-                        onClick={copyToClipboard}
-                    >
-                        <Copy className="h-3 w-3" />
-                    </Button>
+                    {/* Hover Actions */}
+                    <div className={styles.actionContainer}>
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className={styles.actionButton}
+                            onClick={copyToClipboard}
+                            title="Copy message"
+                        >
+                            <Copy className="h-3 w-3" />
+                        </Button>
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className={styles.actionButton}
+                            onClick={downloadSnippet}
+                            title="Download message"
+                        >
+                            <Download className="h-3 w-3" />
+                        </Button>
+                    </div>
                 </div>
             </div>
         </div>

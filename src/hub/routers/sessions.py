@@ -70,6 +70,7 @@ class SessionInfo(BaseModel):
     created_at: datetime
     last_activity: datetime
     message_count: int = 0
+    tool_mode: Optional[str] = None
 
 
 class SessionListResponse(BaseModel):
@@ -136,6 +137,7 @@ async def create_session(
         created_at=session.created_at,
         last_activity=session.last_activity,
         message_count=0,
+        tool_mode=session.tool_mode,
     )
 
 
@@ -182,6 +184,7 @@ async def list_sessions(
             created_at=s.created_at,
             last_activity=s.last_activity,
             message_count=s.message_count,
+            tool_mode=s.tool_mode,
         )
         for s in sessions
     ]
@@ -208,6 +211,7 @@ async def get_session(
         created_at=session.created_at,
         last_activity=session.last_activity,
         message_count=session.message_count,
+        tool_mode=session.tool_mode,
     )
 
 
@@ -334,4 +338,5 @@ async def update_session(
         created_at=session.created_at,
         last_activity=session.last_activity,
         message_count=session.message_count,
+        tool_mode=session.tool_mode,
     )

@@ -80,7 +80,7 @@ _SIG_RE = re.compile(
 _PARAM_SPLIT_RE = re.compile(r",(?![^(\[{]*[)\]}])")
 
 
-def parse_signature(sig: str) -> List[ParamInfo]:
+def parse_signature(sig: str) -> Optional[List[ParamInfo]]:
     """Parse a text signature into a list of :class:`ParamInfo`.
 
     Handles forms like::
@@ -95,12 +95,14 @@ def parse_signature(sig: str) -> List[ParamInfo]:
         sig: Raw signature string (as stored in the Skill DB).
 
     Returns:
-        List of parsed parameters.
+        List of parsed parameters, or ``None`` if the signature is
+        malformed and cannot be parsed at all.  An empty list means
+        the method genuinely takes no parameters.
     """
     m = _SIG_RE.match(sig.strip())
     if not m:
         logger.debug("Signature did not match expected pattern: %s", sig)
-        return []
+        return None
 
     raw_params = m.group(2).strip()
     if not raw_params:

@@ -78,9 +78,12 @@ class TestParseSignature:
         assert params[1].default == "'hello world'"
         assert params[2].default == "True"
 
-    def test_malformed_returns_empty(self):
-        assert parse_signature("not a signature at all") == []
-        assert parse_signature("") == []
+    def test_malformed_returns_none(self):
+        assert parse_signature("not a signature at all") is None
+        assert parse_signature("") is None
+
+    def test_zero_param_returns_empty_list(self):
+        assert parse_signature("do_thing()") == []
 
     def test_multiline_skipped(self):
         # Single-line regex; multiline signatures not supported
@@ -262,18 +265,22 @@ class TestBuildToolSchema:
         ) == "The x value."
 
     def test_malformed_signature_returns_none(self):
-        # Empty parameters list is valid (returns schema with no params)
-        # but totally unparseable signature returns None only if
-        # parse_signature returns None. Currently returns [] for
-        # malformed, which is valid (no params).
         schema = build_tool_schema(
             class_name="X",
             method_name="y",
             signature="not a signature",
         )
-        # Malformed sig → parse_signature returns [] → valid schema
-        # with just the device param
+        assert schema is None
+
+    def test_zero_param_signature_produces_schema(self):
+        schema = build_tool_schema(
+            class_name="X",
+            method_name="y",
+            signature="y()",
+        )
         assert schema is not None
+        # Only the synthetic device param should be present
+        assert list(schema["parameters"]["properties"].keys()) == ["device"]
         assert schema["parameters"]["required"] == []
 
     def test_default_coercion(self):

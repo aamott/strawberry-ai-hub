@@ -717,6 +717,9 @@ def _build_native_tool_result_blocks(
     return blocks
 
 
+_NATIVE_DISCOVERY_TOOLS = ["search_skills", "describe_function"]
+
+
 async def _build_native_tz_kwargs(
     skill_service: Any,
     tool_mode: str,
@@ -725,6 +728,10 @@ async def _build_native_tz_kwargs(
 
     Returns an empty dict for python_exec mode, or ``additional_tools``
     and ``allowed_tools`` for native mode.
+
+    Always sets ``allowed_tools`` in native mode — even when no skill
+    schemas are available — so that ``python_exec`` cannot leak through
+    from the default TZ config.
     """
     if tool_mode != "native":
         return {}
@@ -732,15 +739,13 @@ async def _build_native_tz_kwargs(
     tool_schemas, tool_names = (
         await skill_service.get_native_tool_schemas()
     )
-    if not tool_schemas:
-        return {}
 
-    return {
-        "additional_tools": tool_schemas,
-        "allowed_tools": (
-            ["search_skills", "describe_function"] + tool_names
-        ),
+    kwargs: dict[str, Any] = {
+        "allowed_tools": _NATIVE_DISCOVERY_TOOLS + tool_names,
     }
+    if tool_schemas:
+        kwargs["additional_tools"] = tool_schemas
+    return kwargs
 
 
 async def _finalize_agent_content(

@@ -565,18 +565,17 @@ async def _execute_single_tool(
 
 def _format_tool_result(
     result: dict[str, Any],
-) -> tuple[bool, Optional[str], Optional[str], bool]:
-    """Normalise a tool result into (success, result_str, error_str, repeat_blocked)."""
+) -> tuple[bool, Optional[str], Optional[str]]:
+    """Normalise a tool result into (success, result_str, error_str)."""
     success = "result" in result
     result_str = str(result.get("result", "")) if success else None
     error_str = str(result.get("error", "")) if not success else None
-    repeat_blocked = bool(result.get("repeat_blocked"))
 
     if success and (result_str is None or not result_str.strip()):
         result_str = "(no output)"
     if (not success) and (error_str is None or not error_str.strip()):
         error_str = "(unknown error)"
-    return success, result_str, error_str, repeat_blocked
+    return success, result_str, error_str
 
 
 async def _execute_tool_calls(
@@ -614,7 +613,7 @@ async def _execute_tool_calls(
         if was_executed:
             had_execution = True
 
-        success, result_str, error_str, repeat_blocked = _format_tool_result(result)
+        success, result_str, error_str = _format_tool_result(result)
 
         yield {
             "type": "tool_call_result",
@@ -623,7 +622,6 @@ async def _execute_tool_calls(
             "success": success,
             "result": result_str,
             "error": error_str,
-            "repeat_blocked": repeat_blocked,
         }
 
         label = tc["name"]
@@ -699,15 +697,14 @@ def _build_iteration_kwargs(
     discovery_limit: int,
     discovery_count: int,
     had_execution: bool,
-    force_text: bool,
+    all_calls_skipped: bool,
     messages: list[dict[str, Any]],
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """Build per-iteration inference kwargs.
 
-    Checks three conditions that can force ``tool_choice='none'``:
-    1. Discovery-after-execution limit exceeded
-    2. All previous-iteration tool calls were blocked as repeats
-    3. (future) Other conditions
+    Checks two conditions that can force ``tool_choice='none'``:
+    1. All previous-iteration tool calls were skipped (duplicates)
+    2. Discovery-after-execution limit exceeded
 
     Returns:
         ``(iter_kwargs, nudge_event)`` — *nudge_event* is ``None``
@@ -715,8 +712,11 @@ def _build_iteration_kwargs(
     """
     iter_kwargs = dict(tz_kwargs)
 
-    if force_text:
-        logger.info("[Agent Loop] Forcing text (all prior calls were repeats).")
+    if all_calls_skipped:
+        logger.info(
+            "[Agent Loop] Forcing text"
+            " (all prior calls were skipped as duplicates)."
+        )
         iter_kwargs["tool_choice"] = "none"
         nudge = _EMPTY_TEXT_NUDGE
         messages.append({"role": "user", "content": nudge})
@@ -854,15 +854,9 @@ def _build_aggregate_guidance(
 
     lines: list[str] = []
     seen: set[str] = set()
-    any_blocked = False
     for tc in tool_calls:
         tcid = str(tc.get("id") or "")
         evt = result_by_id.get(tcid, {})
-        # Repeat-blocked calls already carry guidance in their error
-        # message; don't add conflicting provider guidance for them.
-        if evt.get("repeat_blocked"):
-            any_blocked = True
-            continue
         success = evt.get("success", True)
         name = tc.get("name") or ""
         guidance = provider.tool_result_guidance(name, success)
@@ -870,8 +864,6 @@ def _build_aggregate_guidance(
             lines.append(guidance)
             seen.add(guidance)
 
-    if any_blocked and not lines:
-        return "Respond to the user now using the results you already have."
     return "\n".join(lines)
 
 
@@ -1051,14 +1043,14 @@ async def _agent_loop_events(
     # Track discovery calls made after a skill tool has returned data.
     discovery_after_exec = 0
     discovery_limit = provider.max_discovery_after_execution()
-    force_text_next = False
+    all_calls_skipped = False
 
     for iteration in range(max_iterations):
         iter_kwargs, nudge_event = _build_iteration_kwargs(
             tz_kwargs, discovery_limit, discovery_after_exec,
-            had_any_tool_execution, force_text_next, messages,
+            had_any_tool_execution, all_calls_skipped, messages,
         )
-        force_text_next = False
+        all_calls_skipped = False
         if nudge_event:
             yield nudge_event
 
@@ -1113,7 +1105,7 @@ async def _agent_loop_events(
                 yield event
 
         had_any_tool_execution = had_any_tool_execution or batch_executed
-        force_text_next = not batch_executed and bool(tool_calls)
+        all_calls_skipped = not batch_executed and bool(tool_calls)
 
         yield _inject_tool_results(
             messages, tool_mode, content, raw_blocks,
@@ -1229,10 +1221,10 @@ async def _call_tensorzero(
             detail=f"LLM inference failed: {e}",
         )
 
-    # Extract content from TensorZero response
+    # Extract content and model from TensorZero response
     content = _extract_content(response)
+    model_used = _extract_model(response)
     if not (content or "").strip():
-        model_used = _extract_model(response)
         raise HTTPException(
             status_code=502,
             detail=(
@@ -1240,7 +1232,6 @@ async def _call_tensorzero(
                 f"variant={model_used}"
             ),
         )
-    model_used = _extract_model(response)
 
     return ChatCompletionResponse(
         id=f"chatcmpl-{uuid.uuid4().hex[:8]}",

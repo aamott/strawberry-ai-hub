@@ -123,14 +123,6 @@ class ToolModeProvider(ABC):
             Guidance string.  May be empty if no guidance is needed.
         """
 
-    @abstractmethod
-    def should_stop_after_execution(self) -> bool:
-        """Whether the model should be nudged to produce text after a
-        skill tool executes successfully.
-
-        When ``True``, the agent loop will append a stronger nudge if
-        the model continues to call discovery tools instead of responding.
-        """
 
     @abstractmethod
     def max_discovery_after_execution(self) -> int:
@@ -293,8 +285,6 @@ relevant and proceed unless you NEED clarification."""
             "confirming what was done. Do NOT repeat this tool call."
         )
 
-    def should_stop_after_execution(self) -> bool:
-        return False
 
     def max_discovery_after_execution(self) -> int:
         return 0
@@ -415,8 +405,6 @@ Multi-device:
             "describe_function — you already have the data you need."
         )
 
-    def should_stop_after_execution(self) -> bool:
-        return True
 
     def max_discovery_after_execution(self) -> int:
         return 2

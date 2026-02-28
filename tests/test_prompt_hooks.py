@@ -43,8 +43,6 @@ class TestPythonExecToolModeHooks:
         guidance = self.provider.tool_result_guidance("search_skills", False)
         assert "Fix" in guidance
 
-    def test_should_stop_after_execution_false(self):
-        assert self.provider.should_stop_after_execution() is False
 
     def test_max_discovery_after_execution_zero(self):
         assert self.provider.max_discovery_after_execution() == 0
@@ -78,8 +76,6 @@ class TestNativeToolModeHooks:
         assert "failed" in guidance.lower()
         assert "describe_function" in guidance
 
-    def test_should_stop_after_execution_true(self):
-        assert self.provider.should_stop_after_execution() is True
 
     def test_max_discovery_after_execution_positive(self):
         limit = self.provider.max_discovery_after_execution()
@@ -146,7 +142,7 @@ class TestBuildIterationKwargs:
         messages: list = []
         kwargs, event = _build_iteration_kwargs(
             tz_kwargs={}, discovery_limit=0, discovery_count=5,
-            had_execution=True, force_text=False, messages=messages,
+            had_execution=True, all_calls_skipped=False, messages=messages,
         )
         assert event is None
         assert "tool_choice" not in kwargs
@@ -155,7 +151,7 @@ class TestBuildIterationKwargs:
         messages: list = []
         kwargs, event = _build_iteration_kwargs(
             tz_kwargs={}, discovery_limit=3, discovery_count=1,
-            had_execution=True, force_text=False, messages=messages,
+            had_execution=True, all_calls_skipped=False, messages=messages,
         )
         assert event is None
         assert "tool_choice" not in kwargs
@@ -164,7 +160,7 @@ class TestBuildIterationKwargs:
         messages: list = []
         kwargs, event = _build_iteration_kwargs(
             tz_kwargs={}, discovery_limit=2, discovery_count=5,
-            had_execution=False, force_text=False, messages=messages,
+            had_execution=False, all_calls_skipped=False, messages=messages,
         )
         assert event is None
 
@@ -172,7 +168,7 @@ class TestBuildIterationKwargs:
         messages: list = []
         kwargs, event = _build_iteration_kwargs(
             tz_kwargs={"extra": 1}, discovery_limit=2, discovery_count=2,
-            had_execution=True, force_text=False, messages=messages,
+            had_execution=True, all_calls_skipped=False, messages=messages,
         )
         assert event is not None
         assert event["type"] == "injected_message"
@@ -184,7 +180,7 @@ class TestBuildIterationKwargs:
         messages: list = []
         kwargs, event = _build_iteration_kwargs(
             tz_kwargs={}, discovery_limit=0, discovery_count=0,
-            had_execution=False, force_text=True, messages=messages,
+            had_execution=False, all_calls_skipped=True, messages=messages,
         )
         assert event is not None
         assert kwargs["tool_choice"] == "none"
@@ -195,7 +191,7 @@ class TestBuildIterationKwargs:
         original = {"key": "value"}
         kwargs, _ = _build_iteration_kwargs(
             tz_kwargs=original, discovery_limit=2, discovery_count=3,
-            had_execution=True, force_text=False, messages=messages,
+            had_execution=True, all_calls_skipped=False, messages=messages,
         )
         assert "tool_choice" not in original
         assert "tool_choice" in kwargs

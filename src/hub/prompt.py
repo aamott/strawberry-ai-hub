@@ -67,11 +67,18 @@ entity/object names.
 
 
 class ToolModeProvider(ABC):
-    """Base class for tool-mode-specific prompt content.
+    """Base class for tool-mode-specific prompt content and behavior.
 
-    Each tool mode implements this interface. The shared composition
-    logic lives in :meth:`build_tools_section`.
+    Each tool mode implements this interface to define both:
+    - **System prompt sections** (what the LLM sees at conversation start)
+    - **Behavioral hooks** (post-tool-call steering, iteration control)
+
+    The shared composition logic lives in :meth:`build_tools_section`.
+    Behavioral hooks are called by the agent loop in ``chat.py`` to
+    inject per-tool guidance messages after each tool execution.
     """
+
+    # -- System prompt sections (abstract) -----------------------------------
 
     @abstractmethod
     def tool_header(self) -> str:
@@ -96,6 +103,49 @@ class ToolModeProvider(ABC):
     @abstractmethod
     def rules_section(self) -> str:
         """Return execution rules and constraints."""
+
+    # -- Behavioral hooks (abstract) -----------------------------------------
+
+    @abstractmethod
+    def tool_result_guidance(self, tool_name: str, success: bool) -> str:
+        """Return a steering message to inject after a tool call completes.
+
+        The agent loop appends this as a user-role message (or embeds it
+        alongside ``tool_result`` blocks) so the LLM knows what to do
+        next — e.g. "respond to the user" or "call the skill tool now".
+
+        Args:
+            tool_name: Name of the tool that just ran (e.g.
+                ``"search_skills"``, ``"WeatherSkill__get_current_weather"``).
+            success: Whether the tool call succeeded.
+
+        Returns:
+            Guidance string.  May be empty if no guidance is needed.
+        """
+
+    @abstractmethod
+    def should_stop_after_execution(self) -> bool:
+        """Whether the model should be nudged to produce text after a
+        skill tool executes successfully.
+
+        When ``True``, the agent loop will append a stronger nudge if
+        the model continues to call discovery tools instead of responding.
+        """
+
+    @abstractmethod
+    def max_discovery_after_execution(self) -> int:
+        """Maximum discovery-tool calls allowed after a skill tool has
+        already returned a result.
+
+        Once this limit is exceeded, the loop injects a forceful nudge
+        telling the model to stop calling tools and respond.  This
+        prevents the "tool-happy" pattern where the model calls
+        ``describe_function`` and ``search_skills`` after already having
+        the data it needs.
+
+        Returns:
+            Max discovery calls.  0 means no limit.
+        """
 
     # -- Concrete composition -----------------------------------------------
 
@@ -223,6 +273,32 @@ Documentation lookup:
 If there are multiple possible devices or skills, choose the most
 relevant and proceed unless you NEED clarification."""
 
+    # -- Behavioral hooks ---------------------------------------------------
+
+    def tool_result_guidance(self, tool_name: str, success: bool) -> str:
+        if not success:
+            return (
+                "Fix the error and try again with corrected arguments."
+            )
+        if tool_name == "search_skills":
+            return (
+                "Now call python_exec to execute the skill. "
+                "search_skills only finds skills — it does NOT run them."
+            )
+        if tool_name == "describe_function":
+            return "Now call python_exec to execute the skill."
+        # python_exec or any other tool
+        return (
+            "Give the user a short, natural-language answer "
+            "confirming what was done. Do NOT repeat this tool call."
+        )
+
+    def should_stop_after_execution(self) -> bool:
+        return False
+
+    def max_discovery_after_execution(self) -> int:
+        return 0
+
 
 # ---------------------------------------------------------------------------
 # HubNativeToolMode — native tool calling for the Hub
@@ -309,13 +385,41 @@ Multi-device:
 ## Rules
 
 1. Call tools directly — do NOT write code or use python_exec.
-2. After a tool call completes, always give a natural-language
-   response to the user.
+2. After a skill tool returns a result, respond to the user in
+   natural language IMMEDIATELY. Do NOT call search_skills or
+   describe_function after you already have data.
 3. Do NOT say "I can't" until you have searched for skills.
 4. If a tool call fails, check describe_function for correct
    parameter names and types, then retry.
 5. For smart-home commands, look for HomeAssistantSkill tools.
-   Pass the device/entity name as the 'name' parameter."""
+   Pass the device/entity name as the 'name' parameter.
+6. Only use search_skills and describe_function BEFORE executing
+   a skill tool, never after."""
+
+    # -- Behavioral hooks ---------------------------------------------------
+
+    _DISCOVERY_TOOLS = frozenset({"search_skills", "describe_function"})
+
+    def tool_result_guidance(self, tool_name: str, success: bool) -> str:
+        if not success:
+            return (
+                "The tool call failed. Check describe_function for "
+                "correct parameter names and types, then retry."
+            )
+        if tool_name in self._DISCOVERY_TOOLS:
+            return "Now call the appropriate skill tool directly."
+        # A skill tool succeeded — strong nudge to respond.
+        return (
+            "You have the result. Respond to the user in natural "
+            "language now. Do NOT call search_skills or "
+            "describe_function — you already have the data you need."
+        )
+
+    def should_stop_after_execution(self) -> bool:
+        return True
+
+    def max_discovery_after_execution(self) -> int:
+        return 2
 
 
 # ---------------------------------------------------------------------------

@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth import get_current_device
 from ..config import settings
 from ..database import Device, Message, Session, get_db
+from ..prompt import ToolModeProvider, get_tool_mode_provider
 from ..tensorzero_gateway import inference as tz_inference
 from ..tensorzero_gateway import inference_stream as tz_inference_stream
 from ..utils import normalize_device_name
@@ -496,6 +497,17 @@ def _parse_response_blocks(
     return content, tool_calls, model_used, blocks
 
 
+_REPEAT_WARN_THRESHOLD = 1  # Warn (but still execute) after this many calls
+
+
+_REPEAT_WARNING = (
+    "[Warning: This tool was already called with the same arguments. "
+    "You should only repeat a tool call if the user explicitly asked "
+    "you to retry or the previous attempt failed. If the result is "
+    "the same, respond to the user now.]\n"
+)
+
+
 async def _execute_single_tool(
     tc: dict[str, Any],
     skill_service: Any,
@@ -505,6 +517,10 @@ async def _execute_single_tool(
 ) -> tuple[dict[str, Any], bool]:
     """Execute one tool call, handling duplicates and repeats.
 
+    Duplicates within a single batch are skipped entirely. Repeats
+    across iterations are still executed but include a warning in the
+    result after ``_REPEAT_WARN_THRESHOLD`` executions.
+
     Returns:
         Tuple of (result dict, was_executed).
     """
@@ -512,6 +528,7 @@ async def _execute_single_tool(
         f"{tc['name']}:{json.dumps(tc['arguments'] or {}, sort_keys=True, default=str)}"
     )
 
+    # Exact duplicate within the same response batch — skip entirely
     if execution_key in seen_keys:
         logger.warning(
             "[Agent Loop] Duplicate tool call in single response; skipping."
@@ -523,33 +540,43 @@ async def _execute_single_tool(
 
     seen_keys.add(execution_key)
     repeated[execution_key] = repeated.get(execution_key, 0) + 1
-    if repeated[execution_key] > 1:
+    is_repeat = repeated[execution_key] > _REPEAT_WARN_THRESHOLD
+
+    if is_repeat:
         logger.warning(
-            "[Agent Loop] Tool call repeated across iterations."
-            " iteration=%s count=%s tool=%s args=%s",
-            iteration,
+            "[Agent Loop] Repeated tool call (%d > %d); executing with warning."
+            " iteration=%s tool=%s args=%s",
             repeated[execution_key],
+            _REPEAT_WARN_THRESHOLD,
+            iteration,
             tc.get("name"),
             tc.get("arguments"),
         )
 
+    # Always execute — even repeats get to run
     result = await skill_service.execute_tool(tc["name"], tc["arguments"])
+
+    # Prepend warning to the result so the LLM knows it's repeating
+    if is_repeat and "result" in result:
+        result["result"] = _REPEAT_WARNING + str(result["result"])
+
     return result, True
 
 
 def _format_tool_result(
     result: dict[str, Any],
-) -> tuple[bool, Optional[str], Optional[str]]:
-    """Normalise a tool result into (success, result_str, error_str)."""
+) -> tuple[bool, Optional[str], Optional[str], bool]:
+    """Normalise a tool result into (success, result_str, error_str, repeat_blocked)."""
     success = "result" in result
     result_str = str(result.get("result", "")) if success else None
     error_str = str(result.get("error", "")) if not success else None
+    repeat_blocked = bool(result.get("repeat_blocked"))
 
     if success and (result_str is None or not result_str.strip()):
         result_str = "(no output)"
     if (not success) and (error_str is None or not error_str.strip()):
         error_str = "(unknown error)"
-    return success, result_str, error_str
+    return success, result_str, error_str, repeat_blocked
 
 
 async def _execute_tool_calls(
@@ -587,7 +614,7 @@ async def _execute_tool_calls(
         if was_executed:
             had_execution = True
 
-        success, result_str, error_str = _format_tool_result(result)
+        success, result_str, error_str, repeat_blocked = _format_tool_result(result)
 
         yield {
             "type": "tool_call_result",
@@ -596,6 +623,7 @@ async def _execute_tool_calls(
             "success": success,
             "result": result_str,
             "error": error_str,
+            "repeat_blocked": repeat_blocked,
         }
 
         label = tc["name"]
@@ -643,6 +671,84 @@ _EMPTY_TEXT_NUDGE = (
     "using the tool results above."
 )
 
+_DISCOVERY_LIMIT_NUDGE = (
+    "[System Note] You already have the data you need from previous "
+    "tool calls. Do NOT call search_skills or describe_function again. "
+    "Respond to the user NOW in natural language using the results above."
+)
+
+_DISCOVERY_TOOL_NAMES = frozenset({"search_skills", "describe_function"})
+
+
+def _count_discovery_calls(
+    tool_calls: list[dict[str, Any]],
+    had_execution: bool,
+) -> int:
+    """Count discovery tool calls in a batch, but only after a skill
+    tool has already executed."""
+    if not had_execution:
+        return 0
+    return sum(
+        1 for tc in tool_calls
+        if (tc.get("name") or "") in _DISCOVERY_TOOL_NAMES
+    )
+
+
+def _build_iteration_kwargs(
+    tz_kwargs: dict[str, Any],
+    discovery_limit: int,
+    discovery_count: int,
+    had_execution: bool,
+    force_text: bool,
+    messages: list[dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Build per-iteration inference kwargs.
+
+    Checks three conditions that can force ``tool_choice='none'``:
+    1. Discovery-after-execution limit exceeded
+    2. All previous-iteration tool calls were blocked as repeats
+    3. (future) Other conditions
+
+    Returns:
+        ``(iter_kwargs, nudge_event)`` — *nudge_event* is ``None``
+        when no nudge was needed.
+    """
+    iter_kwargs = dict(tz_kwargs)
+
+    if force_text:
+        logger.info("[Agent Loop] Forcing text (all prior calls were repeats).")
+        iter_kwargs["tool_choice"] = "none"
+        nudge = _EMPTY_TEXT_NUDGE
+        messages.append({"role": "user", "content": nudge})
+        return iter_kwargs, {
+            "type": "injected_message",
+            "role": "user",
+            "content": nudge,
+        }
+
+    if (
+        discovery_limit > 0
+        and had_execution
+        and discovery_count >= discovery_limit
+    ):
+        logger.info(
+            "[Agent Loop] Discovery limit reached (%d/%d); "
+            "forcing text response.",
+            discovery_count, discovery_limit,
+        )
+        messages.append({
+            "role": "user",
+            "content": _DISCOVERY_LIMIT_NUDGE,
+        })
+        iter_kwargs["tool_choice"] = "none"
+        return iter_kwargs, {
+            "type": "injected_message",
+            "role": "user",
+            "content": _DISCOVERY_LIMIT_NUDGE,
+        }
+
+    return iter_kwargs, None
+
 
 def _inject_tool_results(
     messages: list[dict[str, Any]],
@@ -652,33 +758,121 @@ def _inject_tool_results(
     tool_results: list[str],
     tool_calls: list[dict[str, Any]],
     per_tool_results: list[dict[str, Any]],
+    provider: ToolModeProvider | None = None,
 ) -> dict[str, Any]:
     """Append assistant + tool-result messages to the conversation.
+
+    Uses the provider's ``tool_result_guidance()`` to build per-tool
+    steering messages rather than hardcoding them here.
 
     Returns an ``injected_message`` event dict for the caller to yield.
     """
     if tool_mode == "native":
-        messages.append({"role": "assistant", "content": raw_blocks})
-        blocks = _build_native_tool_result_blocks(tool_calls, per_tool_results)
-        messages.append({"role": "user", "content": blocks})
-        return {
-            "type": "injected_message",
-            "role": "user",
-            "content": json.dumps(blocks, default=str),
-        }
+        return _inject_native_tool_results(
+            messages, raw_blocks, tool_calls, per_tool_results, provider,
+        )
 
+    return _inject_python_exec_tool_results(
+        messages, content, tool_results, tool_calls, per_tool_results,
+        provider,
+    )
+
+
+def _inject_native_tool_results(
+    messages: list[dict[str, Any]],
+    raw_blocks: list[Any],
+    tool_calls: list[dict[str, Any]],
+    per_tool_results: list[dict[str, Any]],
+    provider: ToolModeProvider | None = None,
+) -> dict[str, Any]:
+    """Native mode: structured tool_result blocks + guidance text block.
+
+    Guidance is embedded as a ``text`` content block in the SAME user
+    message as the ``tool_result`` blocks so the model actually sees it.
+    A separate user message after tool_results is ignored by most models.
+    """
+    messages.append({"role": "assistant", "content": raw_blocks})
+    blocks = _build_native_tool_result_blocks(tool_calls, per_tool_results)
+
+    guidance = _build_aggregate_guidance(
+        tool_calls, per_tool_results, provider,
+    )
+    if guidance:
+        blocks.append({"type": "text", "text": guidance})
+
+    messages.append({"role": "user", "content": blocks})
+
+    return {
+        "type": "injected_message",
+        "role": "user",
+        "content": json.dumps(blocks, default=str),
+    }
+
+
+def _inject_python_exec_tool_results(
+    messages: list[dict[str, Any]],
+    content: str,
+    tool_results: list[str],
+    tool_calls: list[dict[str, Any]],
+    per_tool_results: list[dict[str, Any]],
+    provider: ToolModeProvider | None = None,
+) -> dict[str, Any]:
+    """python_exec mode: plain-text tool results + guidance."""
     messages.append({"role": "assistant", "content": content})
     tool_output = "\n".join(tool_results)
-    injected = (
-        f"[Tool Results]\n{tool_output}\n\n"
-        "[Now respond naturally to the user based on these results.]"
+
+    guidance = _build_aggregate_guidance(
+        tool_calls, per_tool_results, provider,
     )
+    injected = f"[Tool Results]\n{tool_output}"
+    if guidance:
+        injected += f"\n\n{guidance}"
+
     messages.append({"role": "user", "content": injected})
     return {
         "type": "injected_message",
         "role": "user",
         "content": injected,
     }
+
+
+def _build_aggregate_guidance(
+    tool_calls: list[dict[str, Any]],
+    per_tool_results: list[dict[str, Any]],
+    provider: ToolModeProvider | None,
+) -> str:
+    """Combine per-tool guidance from the provider into one message.
+
+    Falls back to a generic "respond naturally" if no provider is set.
+    """
+    if not provider:
+        return "[Now respond naturally to the user based on these results.]"
+
+    result_by_id: dict[str, dict[str, Any]] = {
+        evt.get("tool_call_id", ""): evt for evt in per_tool_results
+    }
+
+    lines: list[str] = []
+    seen: set[str] = set()
+    any_blocked = False
+    for tc in tool_calls:
+        tcid = str(tc.get("id") or "")
+        evt = result_by_id.get(tcid, {})
+        # Repeat-blocked calls already carry guidance in their error
+        # message; don't add conflicting provider guidance for them.
+        if evt.get("repeat_blocked"):
+            any_blocked = True
+            continue
+        success = evt.get("success", True)
+        name = tc.get("name") or ""
+        guidance = provider.tool_result_guidance(name, success)
+        if guidance and guidance not in seen:
+            lines.append(guidance)
+            seen.add(guidance)
+
+    if any_blocked and not lines:
+        return "Respond to the user now using the results you already have."
+    return "\n".join(lines)
 
 
 def _build_native_tool_result_blocks(
@@ -829,6 +1023,8 @@ async def _agent_loop_events(
         connection_manager=manager,
     )
 
+    provider = get_tool_mode_provider(tool_mode)
+
     messages: List[Dict[str, Any]] = []
     system_prompt = await skill_service.get_system_prompt(
         requesting_device_key=normalize_device_name(
@@ -852,13 +1048,25 @@ async def _agent_loop_events(
     had_any_tool_execution = False
     did_empty_text_retry = False
     repeated_across_iterations: dict[str, int] = {}
+    # Track discovery calls made after a skill tool has returned data.
+    discovery_after_exec = 0
+    discovery_limit = provider.max_discovery_after_execution()
+    force_text_next = False
 
     for iteration in range(max_iterations):
+        iter_kwargs, nudge_event = _build_iteration_kwargs(
+            tz_kwargs, discovery_limit, discovery_after_exec,
+            had_any_tool_execution, force_text_next, messages,
+        )
+        force_text_next = False
+        if nudge_event:
+            yield nudge_event
+
         response = await tz_inference(
             messages=messages,
             function_name="chat",
             system=system_prompt,
-            **tz_kwargs,
+            **iter_kwargs,
         )
 
         content, tool_calls, model_used, raw_blocks = _parse_response_blocks(
@@ -885,29 +1093,32 @@ async def _agent_loop_events(
             final_content = content
             break
 
-        # Execute tool calls via helper generator.
-        seen_keys: set[str] = set()
-        per_tool_results: list[dict[str, Any]] = []
+        discovery_after_exec += _count_discovery_calls(
+            tool_calls, had_any_tool_execution,
+        )
+
+        # Execute tool calls and collect results.
+        tool_results, per_tool_results, batch_executed = [], [], False
         async for event in _execute_tool_calls(
-            tool_calls,
-            skill_service,
-            seen_keys,
-            repeated_across_iterations,
-            iteration,
+            tool_calls, skill_service, set(),
+            repeated_across_iterations, iteration,
         ):
             if event["type"] == "_tool_summary":
                 tool_results = event["results"]
-                if event["had_execution"]:
-                    had_any_tool_execution = True
+                batch_executed = event["had_execution"]
             elif event["type"] == "tool_call_result":
                 per_tool_results.append(event)
                 yield event
             else:
                 yield event
 
+        had_any_tool_execution = had_any_tool_execution or batch_executed
+        force_text_next = not batch_executed and bool(tool_calls)
+
         yield _inject_tool_results(
             messages, tool_mode, content, raw_blocks,
             tool_results, tool_calls, per_tool_results,
+            provider=provider,
         )
         final_content = content
 

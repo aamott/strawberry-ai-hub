@@ -9,9 +9,11 @@ from hub.prompt import (
     get_tool_mode_provider,
 )
 from hub.routers.chat import (
-    _build_aggregate_guidance,
     _build_iteration_kwargs,
     _count_discovery_calls,
+)
+from hub.routers.chat.tool_execution import (
+    build_aggregate_guidance as _build_aggregate_guidance,
 )
 
 # ---------------------------------------------------------------------------

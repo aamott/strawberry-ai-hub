@@ -26,39 +26,15 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 ROLE_SECTION = """\
-SYSTEM INSTRUCTIONS (read carefully and follow exactly):
+You are Strawberry, a helpful AI assistant. You have access to skills
+(specialized tools) across all connected devices that let you perform
+real-world actions — controlling smart home devices, checking weather,
+searching documents, and more.
 
-You are Strawberry, a helpful AI assistant with access to
-skills across all connected devices.
-
-## Critical Notes
-
-- Try to be helpful. If the user requests something that you suspect
-  requires a skill (fetching weather, adding numbers, etc), call
-  `search_skills` to find the skill. If you need more information
-  about a skill function, call `describe_function`.
-- Do NOT say "I can't" until you have searched for skills and
-  confirmed that the skill does not exist. It may take multiple
-  searches.
-- After you find the right skill, execute it immediately. Don't ask
-  for confirmation unless you actually need clarification (e.g., a
-  required location you don't have).
-- Do NOT reexecute the same snippet of code if you don't get output.
-  Just tell the user the skill failed and what happened. However, if
-  you can try different input to make it work, do so.
-- After tool calls complete, ALWAYS provide a final natural-language
-  answer. Where useful, include interim responses ("Let me find that
-  for you") to keep the user engaged.
-
-## Searching Tips
-
-search_skills matches against method names, skill names, and
-descriptions. Search by **action** or **verb**, not by specific
-entity/object names.
-- To turn on a lamp, search 'turn on' or 'lamp'.
-- To set brightness, search 'light' or 'brightness'.
-- If a skill doesn't show up on the first try, continue searching
-  and experiment with different keywords."""
+Use your tools to accomplish tasks. When you're unsure what's available,
+search first, then act. Ask followup questions when needed, but try to 
+accomplish the user's request in as few steps as possible. Overall, remember
+you're a smart agent - you can figure things out!"""
 
 
 # ---------------------------------------------------------------------------
@@ -171,62 +147,44 @@ class HubPythonExecToolMode(ToolModeProvider):
     """
 
     def tool_header(self) -> str:
-        """List the 3 available tools."""
+        """List the available tools."""
         return """\
 ## Available Tools
 
-You have exactly 3 tools and a set of python skills to help you execute tasks:
-1) search_skills(query) - Find skills by keyword
-   (searches method names and descriptions).
-2) describe_function(path) - Get the full signature for a skill
-   method. Call this if you need more information about a skill
-   function, e.g. after an error.
-3) python_exec(code) - Execute Python code, including skills."""
+1) search_skills(query) - Find skills by keyword.
+2) describe_function(path) - Get full signature and docstring for a
+   skill method.
+3) python_exec(code) - Execute Python code to call skills."""
 
     def discovery_section(self) -> str:
         """Describe search_skills for Hub (multi-device)."""
         return """\
 ## search_skills
 
-- search_skills(query) - Find skill functions by keyword.
-  Searches method names and descriptions and returns a list of
-  skill methods, devices they belong to, and a short description.
-  Many devices may have the same skill method name, so the device
-  is included to disambiguate. If it doesn't matter which device
-  runs it (like the calculator skill) you can pick any device, but
-  prefer the `preferred_device` if present.
+search_skills(query) returns matching skill methods, the devices
+they belong to, and short descriptions. If a skill appears on
+multiple devices, prefer the `preferred_device` if present.
 
-  Example:
-  ```
-  search_skills(query="weather")
-  ```
-
-  Device-agnostic skills route through `devices.hub.*`"""
+Example: search_skills(query="weather")"""
 
     def describe_section(self) -> str:
-        """Describe describe_function (shared)."""
+        """Describe describe_function."""
         return """\
 ## describe_function
 
-- describe_function(path) - Get the full signature and docstring
-  for a skill method. Helpful for debugging or when you need more
-  information."""
+describe_function(path) returns the full signature and docstring
+for a skill method. Use it when you need parameter details."""
 
     def execution_section(self) -> str:
         """Describe python_exec for Hub (always devices.*)."""
         return """\
 ## python_exec
 
-- Use `python_exec` to execute skills. It takes a string of Python
-  code and executes it. The code should call a skill method and
-  print the final output. Avoid importing — just use default
-  python functions.
-- Use the `devices` object for remote devices:
-  `devices.<device>.<SkillClass>.<method>(...)`
-- print the final output so the result is surfaced to you.
-  Otherwise you won't see a result.
-- Do NOT use offline-mode syntax like device.<SkillClass>.<method>(...)
-  in online mode."""
+Execute skills via python_exec. Syntax:
+  python_exec(code="print(devices.<device>.<Skill>.<method>(...))")
+
+Always wrap calls in print() so you can see the result.
+Device-agnostic skills route through devices.hub.*"""
 
     def examples_section(self) -> str:
         """Provide Hub-specific examples."""
@@ -245,29 +203,21 @@ Documentation lookup:
   a) search_skills(query="documentation")
   b) python_exec(code="print(
      devices.<device>.Context7Skill
-     .resolve_library_id(libraryName='react'))")
-  c) python_exec(code="print(
-     devices.<device>.Context7Skill
-     .query_docs(libraryId='...', query='getting started'))")"""
+     .resolve_library_id(libraryName='react'))")"""
 
     def rules_section(self) -> str:
-        """Return python_exec rules for the Hub."""
+        """Minimal rules — most steering is via tool_result_guidance."""
         return """\
-## Rules
+## Important
 
-1. Use python_exec to call skills — do NOT call skill methods
-   directly as tools. It won't work.
-2. Do NOT output code blocks or ```tool_outputs``` — use python_exec.
-3. For smart-home commands (turn on/off, lights, locks, media), look
-   for HomeAssistantSkill. Pass the device/entity name as the 'name'
-   kwarg.
-
-If there are multiple possible devices or skills, choose the most
-relevant and proceed unless you NEED clarification."""
+- Always print() results inside python_exec.
+- If a tool call fails, fix the error and retry.
+- If multiple skills match, pick the best and proceed."""
 
     # -- Behavioral hooks ---------------------------------------------------
 
     def tool_result_guidance(self, tool_name: str, success: bool) -> str:
+        """Steer the LLM after each tool call."""
         if not success:
             return (
                 "Fix the error and try again with corrected arguments."
@@ -287,6 +237,7 @@ relevant and proceed unless you NEED clarification."""
 
 
     def max_discovery_after_execution(self) -> int:
+        """No limit on discovery calls for Hub python_exec mode."""
         return 0
 
 
@@ -307,53 +258,46 @@ class HubNativeToolMode(ToolModeProvider):
     """
 
     def tool_header(self) -> str:
+        """List the available tools in native mode."""
         return """\
 ## Available Tools
 
-Each skill method is registered as a native tool that you can call
-directly by name.  You also have two discovery helpers:
+Each skill method is a native tool you can call directly.
+Discovery helpers:
 1) search_skills(query) - Find skills by keyword.
 2) describe_function(path) - Get full signature and docstring."""
 
     def discovery_section(self) -> str:
+        """Describe search_skills."""
         return """\
 ## search_skills
 
-- search_skills(query) - Find skill functions by keyword.
-  Returns skill names, devices, and short descriptions.
-  Use this when you're not sure which tool to call.
+search_skills(query) returns matching skill names, devices, and
+short descriptions. Use this when you're not sure which tool to call.
 
-  Example:
-  ```
-  search_skills(query="weather")
-  ```"""
+Example: search_skills(query="weather")"""
 
     def describe_section(self) -> str:
+        """Describe describe_function."""
         return """\
 ## describe_function
 
-- describe_function(path) - Get the full signature and docstring
-  for a skill method. Helpful when you need parameter details."""
+describe_function(path) returns the full signature and docstring
+for a skill method. Use it when you need parameter details."""
 
     def execution_section(self) -> str:
+        """Describe native tool calling syntax."""
         return """\
 ## Calling Skills
 
-- Call skill tools directly by name. No code required.
-- Tool names follow the pattern: SkillClass__method_name
-  (double underscore between class and method).
-- Pass parameters as named arguments.
-- To route to a specific device, include the optional
-  `device` parameter. If omitted, the hub picks the best
-  available device automatically.
+Call skill tools directly by name using the pattern:
+  SkillClass__method_name(param=value)
 
-Example:
-  WeatherSkill__get_current_weather(
-      location="San Francisco, CA",
-      device="living_room_pc"
-  )"""
+No code required — just pass named arguments.
+Include the optional `device` parameter to target a specific device."""
 
     def examples_section(self) -> str:
+        """Provide native-mode examples."""
         return """\
 ## Examples
 
@@ -371,26 +315,20 @@ Multi-device:
          device="home_server")"""
 
     def rules_section(self) -> str:
+        """Minimal native-mode rules."""
         return """\
-## Rules
+## Important
 
-1. Call tools directly — do NOT write code or use python_exec.
-2. After a skill tool returns a result, respond to the user in
-   natural language IMMEDIATELY. Do NOT call search_skills or
-   describe_function after you already have data.
-3. Do NOT say "I can't" until you have searched for skills.
-4. If a tool call fails, check describe_function for correct
-   parameter names and types, then retry.
-5. For smart-home commands, look for HomeAssistantSkill tools.
-   Pass the device/entity name as the 'name' parameter.
-6. Only use search_skills and describe_function BEFORE executing
-   a skill tool, never after."""
+- Call tools directly — do NOT use python_exec.
+- If a tool call fails, check describe_function for correct
+  parameters and retry."""
 
     # -- Behavioral hooks ---------------------------------------------------
 
     _DISCOVERY_TOOLS = frozenset({"search_skills", "describe_function"})
 
     def tool_result_guidance(self, tool_name: str, success: bool) -> str:
+        """Steer the LLM after each tool call."""
         if not success:
             return (
                 "The tool call failed. Check describe_function for "
@@ -407,6 +345,7 @@ Multi-device:
 
 
     def max_discovery_after_execution(self) -> int:
+        """Allow up to 2 discovery calls after a skill tool returns."""
         return 2
 
 
@@ -460,6 +399,8 @@ _TOOL_HEADERS = {
     "searching tips",
     "critical notes",
     "available skills",
+    "important",
+    "calling skills",
 }
 
 

@@ -69,25 +69,25 @@ class TestHubPythonExecToolMode:
         assert "describe_function" in header
         assert "python_exec" in header
 
-    def test_discovery_mentions_devices_hub(self, provider) -> None:
+    def test_discovery_mentions_devices(self, provider) -> None:
         section = provider.discovery_section()
-        assert "devices.hub" in section
+        assert "devices" in section.lower()
 
     def test_execution_uses_devices_syntax(self, provider) -> None:
         section = provider.execution_section()
-        assert "devices.<device>.<SkillClass>.<method>" in section
+        assert "devices.<device>.<Skill>" in section
 
-    def test_execution_warns_against_offline_syntax(self, provider) -> None:
+    def test_execution_mentions_hub(self, provider) -> None:
         section = provider.execution_section()
-        assert "offline-mode syntax" in section
+        assert "devices.hub" in section
 
     def test_examples_have_devices_syntax(self, provider) -> None:
         examples = provider.examples_section()
         assert "devices.<device>" in examples
 
-    def test_rules_mention_python_exec(self, provider) -> None:
+    def test_rules_mention_print(self, provider) -> None:
         rules = provider.rules_section()
-        assert "python_exec" in rules
+        assert "print()" in rules
 
     def test_build_tools_section_composites_all(self, provider) -> None:
         tools = provider.build_tools_section()
@@ -95,8 +95,8 @@ class TestHubPythonExecToolMode:
         assert "## Available Tools" in tools
         assert "## search_skills" in tools
         assert "## python_exec" in tools
-        assert "## Examples" in tools
-        assert "## Rules" in tools
+        assert "## Example" in tools
+        assert "## Important" in tools
 
 
 # ---------------------------------------------------------------------------

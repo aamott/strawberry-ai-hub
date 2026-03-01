@@ -169,12 +169,13 @@ def configure_logging(
     root_logger.addHandler(file_handler)
     root_logger.addHandler(stream_handler)
 
-    # Tone down noisy dependency loggers while preserving debug elsewhere.
-    sqlalchemy_level = logging.INFO if debug else logging.WARNING
+    # Keep SQL noise out of normal debug sessions. We can still temporarily
+    # raise these loggers when actively debugging DB behavior.
+    sqlalchemy_level = logging.WARNING
     for logger_name in ("sqlalchemy.engine", "sqlalchemy.pool"):
         logging.getLogger(logger_name).setLevel(sqlalchemy_level)
 
-    aiosqlite_level = logging.INFO if debug else logging.WARNING
+    aiosqlite_level = logging.WARNING
     logging.getLogger("aiosqlite").setLevel(aiosqlite_level)
 
     uvi_level = getattr(logging, uvicorn_log_level.upper(), logging.INFO)

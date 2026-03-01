@@ -183,7 +183,7 @@ def get_engine():
         is_sqlite = settings.database_url.startswith("sqlite")
         _engine = create_async_engine(
             settings.database_url,
-            echo=settings.debug,
+            echo=False,
             # SQLite only supports one writer at a time, so limit
             # the pool to avoid contention between connections.
             pool_size=1 if is_sqlite else 5,

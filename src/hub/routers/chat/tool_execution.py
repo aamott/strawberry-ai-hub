@@ -28,9 +28,7 @@ _REPEAT_WARN_THRESHOLD = 1  # Warn (but still execute) after this many calls
 
 _REPEAT_WARNING = (
     "[Warning: This tool was already called with the same arguments. "
-    "You should only repeat a tool call if the user explicitly asked "
-    "you to retry or the previous attempt failed. If the result is "
-    "the same, respond to the user now.]\n"
+    "Do NOT call the tool again unless specifically required for the task.]\n"
 )
 
 
@@ -45,12 +43,22 @@ async def execute_single_tool(
     seen_keys: set[str],
     repeated: dict[str, int],
     iteration: int,
+    tool_mode: str = "python_exec",
 ) -> tuple[dict[str, Any], bool]:
     """Execute one tool call, handling duplicates and repeats.
 
     Duplicates within a single batch are skipped entirely. Repeats
     across iterations are still executed but include a warning in the
     result after ``_REPEAT_WARN_THRESHOLD`` executions.
+
+    Args:
+        tc: Tool call dict with ``name`` and ``arguments``.
+        skill_service: Service for executing tools.
+        seen_keys: Set of execution keys for deduplication.
+        repeated: Repeat counter per execution key.
+        iteration: Current agent loop iteration.
+        tool_mode: ``"python_exec"`` or ``"native"`` — passed to
+            ``skill_service.execute_tool``.
 
     Returns:
         Tuple of (result dict, was_executed).
@@ -88,7 +96,7 @@ async def execute_single_tool(
 
     # Always execute — even repeats get to run
     result = await skill_service.execute_tool(
-        tc["name"], tc["arguments"]
+        tc["name"], tc["arguments"], tool_mode=tool_mode,
     )
 
     # Prepend warning so the LLM knows it's repeating
@@ -125,6 +133,7 @@ async def execute_tool_calls(
     seen_keys: set[str],
     repeated: dict[str, int],
     iteration: int,
+    tool_mode: str = "python_exec",
 ) -> AsyncIterator[dict[str, Any]]:
     """Execute a batch of tool calls, yielding SSE events.
 
@@ -146,6 +155,7 @@ async def execute_tool_calls(
 
         result, was_executed = await execute_single_tool(
             tc, skill_service, seen_keys, repeated, iteration,
+            tool_mode=tool_mode,
         )
         if was_executed:
             had_execution = True

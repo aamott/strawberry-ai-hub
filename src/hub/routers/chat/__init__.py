@@ -726,6 +726,7 @@ async def _agent_loop_events(
         async for event in _execute_tool_calls(
             tool_calls, skill_service, set(),
             state.repeated, iteration,
+            tool_mode=tool_mode,
         ):
             if event["type"] == "_tool_summary":
                 tool_results = event["results"]

@@ -189,23 +189,7 @@ class DevicesProxy:
                     "device_agnostic": is_device_agnostic,
                     "devices": device_sample,
                     "device_count": len(sorted_devices),
-                    # TODO: replace "preferred_device" with
-                    # instructions to prioritize executing
-                    # from the current device, and a reminder
-                    # of "current_device: {current_device_name}"
-                    # somewhere it won't be
-                    # repeated once per result
                     "preferred_device": preferred_device,
-                    "call_example": (
-                        f"devices.{preferred_device}.{path}(...)"
-                        if preferred_device
-                        else ""
-                    ),
-                    "python_exec_example": (
-                        f'python_exec(code="print(devices.{preferred_device}.{path}(...))")'
-                        if preferred_device
-                        else ""
-                    ),
                 }
             )
 
@@ -489,12 +473,15 @@ class HubSkillService:
         self,
         tool_name: str,
         arguments: Dict[str, Any],
+        tool_mode: str = "python_exec",
     ) -> Dict[str, Any]:
         """Execute a tool call.
 
         Args:
-            tool_name: Name of the tool (search_skills, describe_function, python_exec)
-            arguments: Tool arguments
+            tool_name: Name of the tool (search_skills, describe_function,
+                python_exec, or a native tool name).
+            arguments: Tool arguments.
+            tool_mode: Tool mode (``"python_exec"`` or ``"native"``).
 
         Returns:
             Dict with "result" or "error" key
@@ -504,11 +491,19 @@ class HubSkillService:
                 query = arguments.get("query", "")
                 device_limit = int(arguments.get("device_limit", 10) or 10)
                 results = await self.devices.search_skills(query, device_limit)
-                return {"result": json.dumps(results, indent=2)}
+                return {
+                    "result": self._format_search_results(
+                        results, tool_mode=tool_mode,
+                    )
+                }
 
             elif tool_name == "describe_function":
                 path = arguments.get("path", "")
                 result = await self.devices.describe_function(path)
+                # Append mode-appropriate example
+                result = self._append_describe_example(
+                    result, tool_mode=tool_mode,
+                )
                 return {"result": result}
 
             elif tool_name == "python_exec":
@@ -533,6 +528,69 @@ class HubSkillService:
         except Exception as e:
             logger.error(f"Tool execution error: {e}")
             return {"error": f"{type(e).__name__}: {e}\n{traceback.format_exc()}"}
+
+    def _format_search_results(
+        self,
+        results: List[Dict[str, Any]],
+        tool_mode: str = "python_exec",
+    ) -> str:
+        """Format search results with mode-appropriate hints.
+
+        In python_exec mode, results include a ``call_example`` with
+        ``devices.<device>.<path>(...)`` syntax.  In native mode they
+        include the tool name (``SkillClass__method_name``).
+
+        Args:
+            results: Raw result dicts from ``DevicesProxy.search_skills``.
+            tool_mode: ``"python_exec"`` or ``"native"``.
+
+        Returns:
+            JSON string of results with mode-appropriate fields.
+        """
+        is_native = tool_mode == "native"
+        formatted = []
+        for r in results:
+            entry = dict(r)  # shallow copy
+            path = r.get("path", "")
+            preferred = r.get("preferred_device")
+            if is_native and "." in path:
+                parts = path.split(".", 1)
+                entry["tool_name"] = f"{parts[0]}__{parts[1]}"
+            elif preferred:
+                entry["call_example"] = (
+                    f"devices.{preferred}.{path}(...)"
+                )
+            formatted.append(entry)
+        return json.dumps(formatted, indent=2)
+
+    @staticmethod
+    def _append_describe_example(
+        raw_result: str,
+        tool_mode: str = "python_exec",
+    ) -> str:
+        """Append a mode-appropriate hint to describe_function output.
+
+        For native mode, hints to call the tool directly. For code mode
+        the Hub's describe already includes device info but no example,
+        so we leave it as-is (the system prompt covers the pattern).
+
+        Args:
+            raw_result: Raw output from ``DevicesProxy.describe_function``.
+            tool_mode: ``"python_exec"`` or ``"native"``.
+
+        Returns:
+            Result string, possibly with appended hint.
+        """
+        if tool_mode != "native":
+            return raw_result
+        # For native mode, add a hint about the tool name format
+        if raw_result.startswith(("Invalid path", "Function not found")):
+            return raw_result
+        return (
+            raw_result
+            + "\n\nCall this tool directly using the native tool name: "
+            "SkillClass__method_name(param=value)"
+        )
 
     async def _execute_dynamic_skill_tool(
         self,

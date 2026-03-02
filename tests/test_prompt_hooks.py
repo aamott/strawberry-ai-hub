@@ -87,7 +87,7 @@ class TestNativeToolModeHooks:
     def test_rules_section_contains_stop_guidance(self):
         """The system prompt rules should reinforce the behavioral hooks."""
         rules = self.provider.rules_section()
-        assert "IMMEDIATELY" in rules or "never after" in rules
+        assert "do not use python_exec" in rules.lower()
 
 
 class TestProviderRegistry:
@@ -154,6 +154,7 @@ class TestBuildIterationKwargs:
         kwargs, event = _build_iteration_kwargs(
             tz_kwargs={}, discovery_limit=3, discovery_count=1,
             had_execution=True, all_calls_skipped=False, messages=messages,
+            iteration=0,  # first iteration, skill-done check won't fire
         )
         assert event is None
         assert "tool_choice" not in kwargs
@@ -194,6 +195,7 @@ class TestBuildIterationKwargs:
         kwargs, _ = _build_iteration_kwargs(
             tz_kwargs=original, discovery_limit=2, discovery_count=3,
             had_execution=True, all_calls_skipped=False, messages=messages,
+            iteration=0,
         )
         assert "tool_choice" not in original
         assert "tool_choice" in kwargs

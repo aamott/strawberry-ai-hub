@@ -20,9 +20,12 @@ logger = logging.getLogger(__name__)
 
 # Single source of truth for discovery tool names.  Imported by
 # __init__.py for _count_discovery_calls and _build_iteration_kwargs.
-DISCOVERY_TOOL_NAMES = frozenset({
-    "search_skills", "describe_function",
-})
+DISCOVERY_TOOL_NAMES = frozenset(
+    {
+        "search_skills",
+        "describe_function",
+    }
+)
 
 _REPEAT_WARN_THRESHOLD = 1  # Warn (but still execute) after this many calls
 
@@ -64,8 +67,7 @@ async def execute_single_tool(
         Tuple of (result dict, was_executed).
     """
     execution_key = (
-        f"{tc['name']}:"
-        f"{json.dumps(tc['arguments'] or {}, sort_keys=True, default=str)}"
+        f"{tc['name']}:{json.dumps(tc['arguments'] or {}, sort_keys=True, default=str)}"
     )
 
     # Exact duplicate within the same response batch — skip
@@ -96,7 +98,9 @@ async def execute_single_tool(
 
     # Always execute — even repeats get to run
     result = await skill_service.execute_tool(
-        tc["name"], tc["arguments"], tool_mode=tool_mode,
+        tc["name"],
+        tc["arguments"],
+        tool_mode=tool_mode,
     )
 
     # Prepend warning so the LLM knows it's repeating
@@ -111,18 +115,12 @@ def format_tool_result(
 ) -> tuple[bool, Optional[str], Optional[str]]:
     """Normalise a tool result into (success, result_str, error_str)."""
     success = "result" in result
-    result_str = (
-        str(result.get("result", "")) if success else None
-    )
-    error_str = (
-        str(result.get("error", "")) if not success else None
-    )
+    result_str = str(result.get("result", "")) if success else None
+    error_str = str(result.get("error", "")) if not success else None
 
     if success and (result_str is None or not result_str.strip()):
         result_str = "(no output)"
-    if (not success) and (
-        error_str is None or not error_str.strip()
-    ):
+    if (not success) and (error_str is None or not error_str.strip()):
         error_str = "(unknown error)"
     return success, result_str, error_str
 
@@ -154,15 +152,17 @@ async def execute_tool_calls(
         }
 
         result, was_executed = await execute_single_tool(
-            tc, skill_service, seen_keys, repeated, iteration,
+            tc,
+            skill_service,
+            seen_keys,
+            repeated,
+            iteration,
             tool_mode=tool_mode,
         )
         if was_executed:
             had_execution = True
 
-        success, result_str, error_str = format_tool_result(
-            result
-        )
+        success, result_str, error_str = format_tool_result(result)
 
         yield {
             "type": "tool_call_result",
@@ -177,9 +177,7 @@ async def execute_tool_calls(
         if success:
             tool_results.append(f"Tool {label}: {result_str}")
         else:
-            tool_results.append(
-                f"Tool {label} error: {error_str}"
-            )
+            tool_results.append(f"Tool {label} error: {error_str}")
 
     yield {
         "type": "_tool_summary",
@@ -212,13 +210,20 @@ def inject_tool_results(
     """
     if tool_mode == "native":
         return _inject_native_tool_results(
-            messages, raw_blocks, tool_calls,
-            per_tool_results, provider,
+            messages,
+            raw_blocks,
+            tool_calls,
+            per_tool_results,
+            provider,
         )
 
     return _inject_python_exec_tool_results(
-        messages, content, tool_results, tool_calls,
-        per_tool_results, provider,
+        messages,
+        content,
+        tool_results,
+        tool_calls,
+        per_tool_results,
+        provider,
     )
 
 
@@ -231,21 +236,25 @@ def _inject_native_tool_results(
 ) -> dict[str, Any]:
     """Native mode: structured tool_result blocks + guidance.
 
-    Guidance is embedded as a ``text`` content block in the SAME user
-    message as the ``tool_result`` blocks so the model actually sees
-    it.  A separate user message after tool_results is ignored by
-    most models.
+    Guidance is appended directly to the end of the `result` string within
+    the `tool_result` block. We do this because Gemini's API expects
+    function-response turns to strictly contain `functionResponse` parts,
+    and TensorZero/Gemini often drops separate text blocks or consecutive
+    user messages containing steering text.
     """
     messages.append({"role": "assistant", "content": raw_blocks})
-    blocks = _build_native_tool_result_blocks(
-        tool_calls, per_tool_results
-    )
 
     guidance = build_aggregate_guidance(
-        tool_calls, per_tool_results, provider,
+        tool_calls,
+        per_tool_results,
+        provider,
     )
-    if guidance:
-        blocks.append({"type": "text", "text": guidance})
+
+    blocks = _build_native_tool_result_blocks(
+        tool_calls,
+        per_tool_results,
+        guidance,
+    )
 
     messages.append({"role": "user", "content": blocks})
 
@@ -264,12 +273,21 @@ def _inject_python_exec_tool_results(
     per_tool_results: list[dict[str, Any]],
     provider: ToolModeProvider | None = None,
 ) -> dict[str, Any]:
-    """python_exec mode: plain-text tool results + guidance."""
+    """python_exec mode: plain-text tool results + guidance.
+
+    In this mode, results and guidance are concatenated into a single
+    plain-text string within one user message. This does NOT suffer
+    from the "mixed blocks" dropping bug seen in native mode because
+    the entire message is a single text block, not a list of
+    heterogeneous structured blocks.
+    """
     messages.append({"role": "assistant", "content": content})
     tool_output = "\n".join(tool_results)
 
     guidance = build_aggregate_guidance(
-        tool_calls, per_tool_results, provider,
+        tool_calls,
+        per_tool_results,
+        provider,
     )
     injected = f"[Tool Results]\n{tool_output}"
     if guidance:
@@ -293,14 +311,10 @@ def build_aggregate_guidance(
     Falls back to a generic "respond naturally" if no provider is set.
     """
     if not provider:
-        return (
-            "[Now respond naturally to the user"
-            " based on these results.]"
-        )
+        return "[Now respond naturally to the user based on these results.]"
 
     result_by_id: dict[str, dict[str, Any]] = {
-        evt.get("tool_call_id", ""): evt
-        for evt in per_tool_results
+        evt.get("tool_call_id", ""): evt for evt in per_tool_results
     }
 
     lines: list[str] = []
@@ -321,16 +335,15 @@ def build_aggregate_guidance(
 def _build_native_tool_result_blocks(
     tool_calls: list[dict[str, Any]],
     per_tool_results: list[dict[str, Any]],
+    guidance: str = "",
 ) -> list[dict[str, Any]]:
     """Build TensorZero ``tool_result`` content blocks for native mode.
 
-    Each block maps a tool call ID to its result string, matching the
-    format expected by TensorZero for multi-turn tool-use
-    conversations.
-
     Args:
-        tool_calls: Tool call dicts (with ``id`` and ``name``).
+        tool_calls: The calls extracted from the previous response.
         per_tool_results: Corresponding ``tool_call_result`` events.
+        guidance: Optional aggregate steering text (e.g. "Now respond")
+            to append directly to the final tool result string.
 
     Returns:
         List of ``{"type": "tool_result", ...}`` dicts.
@@ -341,20 +354,43 @@ def _build_native_tool_result_blocks(
         result_by_id[tcid] = evt
 
     blocks: list[dict[str, Any]] = []
+
+    # We apply the guidance to the very last tool call in this batch
+    last_tcid = str(tool_calls[-1].get("id") or "") if tool_calls else ""
+
     for tc in tool_calls:
         tcid = str(tc.get("id") or "")
         evt = result_by_id.get(tcid, {})
-        result_str = str(
-            evt.get("result")
-            or evt.get("error")
-            or "(no output)"
+
+        # Decide what to put in the result object
+        if "full_result" in evt:
+            payload = evt["full_result"]
+            # To ensure it stays a JSON object, if it's not a dict, wrap it
+            if not isinstance(payload, dict):
+                payload = {"result": payload}
+        else:
+            payload = {
+                "result": evt.get("result")
+                or evt.get("error")
+                or evt.get("error_msg")
+                or "(no output)"
+            }
+
+        # Inject guidance into the last block's JSON
+        if guidance and tcid == last_tcid:
+            payload["_system_guidance"] = guidance
+
+        result_str = json.dumps(payload, default=str)
+
+        blocks.append(
+            {
+                "type": "tool_result",
+                "id": tcid,
+                "name": tc.get("name") or "",
+                "result": result_str,
+            }
         )
-        blocks.append({
-            "type": "tool_result",
-            "id": tcid,
-            "name": tc.get("name") or "",
-            "result": result_str,
-        })
+
     return blocks
 
 
@@ -379,9 +415,7 @@ async def build_native_tz_kwargs(
     if tool_mode != "native":
         return {}
 
-    tool_schemas, tool_names = (
-        await skill_service.get_native_tool_schemas()
-    )
+    tool_schemas, tool_names = await skill_service.get_native_tool_schemas()
 
     kwargs: dict[str, Any] = {
         "allowed_tools": list(DISCOVERY_TOOL_NAMES) + tool_names,

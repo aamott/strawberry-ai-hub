@@ -198,6 +198,27 @@ def _format_tool_message(
     return "\n".join(lines)
 
 
+def _parse_tz_error(e: Exception) -> str:
+    """Extract a user-friendly error message from a TensorZeroError."""
+    error_msg = str(e)
+    if "TensorZeroError" not in type(e).__name__:
+        return error_msg
+
+    import json
+    import re
+
+    match = re.search(r"server:\s*({.*})", error_msg, re.DOTALL)
+    if match:
+        try:
+            js = json.loads(match.group(1))
+            if "error" in js and "message" in js["error"]:
+                return str(js["error"]["message"])
+        except Exception:
+            pass
+
+    return error_msg
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -376,7 +397,8 @@ async def _stream_chat_completions(
         yield _sse({"type": "error", "error": str(e.detail)})
     except Exception as e:
         logger.exception("[Chat Stream] Streaming failed")
-        yield _sse({"type": "error", "error": str(e)})
+        error_msg = _parse_tz_error(e)
+        yield _sse({"type": "error", "error": error_msg})
 
 
 async def _stream_inference_as_deltas(
@@ -829,32 +851,41 @@ async def _run_agent_loop(
         "total_tokens": 0,
     }
 
-    async for event in _agent_loop_events(
-        request=request,
-        device=device,
-        db=db,
-        manager=manager,
-        tool_mode=tool_mode,
-    ):
-        if not isinstance(event, dict):
-            continue
-        if str(event.get("type") or "") == "assistant_message":
-            final_content = str(event.get("content") or "")
-            model_used = str(
-                event.get("model") or model_used
-            )
-            incoming_usage = event.get("usage")
-            if isinstance(incoming_usage, dict):
-                usage = incoming_usage
-        elif str(event.get("type") or "") == "tool_call_result" and session is not None:
-            formatted = _format_tool_message(
-                tool_name=event.get("tool_name", ""),
-                success=event.get("success", False),
-                result=event.get("result"),
-                error=event.get("error"),
-                cached=event.get("cached", False),
-            )
-            await _append_session_message(db, session, "tool", formatted)
+    try:
+        async for event in _agent_loop_events(
+            request=request,
+            device=device,
+            db=db,
+            manager=manager,
+            tool_mode=tool_mode,
+        ):
+            if not isinstance(event, dict):
+                continue
+            if str(event.get("type") or "") == "assistant_message":
+                final_content = str(event.get("content") or "")
+                model_used = str(
+                    event.get("model") or model_used
+                )
+                incoming_usage = event.get("usage")
+                if isinstance(incoming_usage, dict):
+                    usage = incoming_usage
+            elif (
+                str(event.get("type") or "") == "tool_call_result"
+                and session is not None
+            ):
+                formatted = _format_tool_message(
+                    tool_name=event.get("tool_name", ""),
+                    success=event.get("success", False),
+                    result=event.get("result"),
+                    error=event.get("error"),
+                    cached=event.get("cached", False),
+                )
+                await _append_session_message(db, session, "tool", formatted)
+    except Exception as e:
+        logger.exception("[Agent Loop] Loop failed")
+        if not final_content:
+            error_msg = _parse_tz_error(e)
+            raise HTTPException(status_code=502, detail=error_msg)
 
     if not (final_content or "").strip():
         final_content = (

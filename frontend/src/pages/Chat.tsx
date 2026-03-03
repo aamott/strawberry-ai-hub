@@ -244,7 +244,7 @@ export function Chat() {
             console.error(error);
             toast({
                 title: "Error",
-                description: "Failed to send message.",
+                description: error instanceof Error ? error.message : "Failed to send message.",
                 variant: "destructive",
             });
         } finally {

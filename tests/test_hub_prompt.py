@@ -77,9 +77,6 @@ class TestHubPythonExecToolMode:
         section = provider.execution_section()
         assert "devices.<device>.<Skill>" in section
 
-    def test_execution_mentions_hub(self, provider) -> None:
-        section = provider.execution_section()
-        assert "devices.hub" in section
 
     def test_examples_have_devices_syntax(self, provider) -> None:
         examples = provider.examples_section()

@@ -329,14 +329,23 @@ class TestBuildAllToolSchemas:
         schemas, names = build_all_tool_schemas(skills)
         assert len(schemas) == 1
 
-    def test_limit(self):
+    def test_limit_exact(self):
         skills = [
             self._make_skill(f"S{i}", "m", "m()", "")
-            for i in range(50)
+            for i in range(5)
         ]
         schemas, names = build_all_tool_schemas(skills, limit=5)
         assert len(schemas) == 5
         assert len(names) == 5
+
+    def test_limit_exceeded_returns_empty(self):
+        skills = [
+            self._make_skill(f"S{i}", "m", "m()", "")
+            for i in range(6) # 6 > 5 limit
+        ]
+        schemas, names = build_all_tool_schemas(skills, limit=5)
+        assert len(schemas) == 0
+        assert len(names) == 0
 
 
 # ── Tool name helpers ────────────────────────────────────────────────────

@@ -466,12 +466,13 @@ def build_all_tool_schemas(
         schemas.append(schema)
         names.append(schema["name"])
 
-        if len(schemas) >= limit:
-            logger.info(
-                "Native tool limit reached (%d); remaining skills "
-                "available via search_skills.",
-                limit,
-            )
-            break
+    if limit > 0 and len(schemas) > limit:
+        logger.info(
+            "Native tool limit exceeded (%d > %d); hiding all native tools. "
+            "Remaining skills available via search_skills.",
+            len(schemas),
+            limit,
+        )
+        return [], []
 
     return schemas, names

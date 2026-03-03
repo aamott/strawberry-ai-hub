@@ -277,7 +277,7 @@ async def test_chat_executes_repeated_tool_calls_with_warning(auth_client):
 
     execute_count = {"count": 0}
 
-    async def mock_execute_tool(self, tool_name, arguments):
+    async def mock_execute_tool(self, tool_name, arguments, **kwargs):
         execute_count["count"] += 1
         return {"result": "8"}
 

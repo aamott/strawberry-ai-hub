@@ -32,7 +32,7 @@ real-world actions — controlling smart home devices, checking weather,
 searching documents, and more.
 
 Use your tools to accomplish tasks. When you're unsure what's available,
-search first, then act. Ask followup questions when needed, but try to 
+search first, then act. Ask followup questions when needed, but try to
 accomplish the user's request in as few steps as possible. Overall, remember
 you're a smart agent - you can figure things out!"""
 
@@ -262,10 +262,16 @@ class HubNativeToolMode(ToolModeProvider):
         return """\
 ## Available Tools
 
-Each skill method is a native tool you can call directly.
+"Skills" are tools provided to you to complete user requests. Be smart while
+using them. Try to fulfill the user's request in one shot, but don't be afraid
+to ask for clarification if needed, do multiple searches, or describe multiple
+functions.
+
 Discovery helpers:
 1) search_skills(query) - Find skills by keyword.
-2) describe_function(path) - Get full signature and docstring."""
+    It's a pretty basic search, so try multiple queries if needed.
+2) describe_function(path) - Get more info about a skill. Can be helpful when
+   a skill fails or you need to know more about it."""
 
     def discovery_section(self) -> str:
         """Describe search_skills."""
@@ -283,7 +289,8 @@ Example: search_skills(query="weather")"""
 ## describe_function
 
 describe_function(path) returns the full signature and docstring
-for a skill method. Use it when you need parameter details."""
+for a skill method. Use it when you need parameter details or a
+skill isn't responding as expected."""
 
     def execution_section(self) -> str:
         """Describe native tool calling syntax."""
@@ -291,10 +298,10 @@ for a skill method. Use it when you need parameter details."""
 ## Calling Skills
 
 Call skill tools directly by name using the pattern:
-  SkillClass__method_name(param=value)
+  ToolName(param=value)
 
-No code required — just pass named arguments.
-Include the optional `device` parameter to target a specific device."""
+Include the `device` parameter to target a specific device. Some skills
+require the `device` parameter. """
 
     def examples_section(self) -> str:
         """Provide native-mode examples."""
@@ -307,11 +314,11 @@ Weather:
   b) WeatherSkill__get_current_weather(
          location="San Francisco, CA")
 
-Multi-device:
-- User: "Turn on the kitchen lights"
+Home Assistant:
+- User: "Turn on the kitchen lamp"
   a) search_skills(query="turn on light")
   b) HomeAssistantSkill__HassTurnOn(
-         name="Kitchen Light",
+         name="Kitchen Lamp",
          device="home_server")"""
 
     def rules_section(self) -> str:

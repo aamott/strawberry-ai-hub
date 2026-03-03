@@ -195,7 +195,7 @@ export function Chat() {
                 }
 
                 if (event.type === "tool_call_result") {
-                    const { ui, persist } = formatToolCallResult(
+                    const { ui } = formatToolCallResult(
                         event.tool_name,
                         event.success,
                         event.result,
@@ -212,12 +212,7 @@ export function Chat() {
                         },
                     ]);
 
-                    // Persist tool results (but not "started" events) so future turns
-                    // can include tool outputs as context.
-                    await api.post(`/sessions/${currentSessionId}/messages`, {
-                        role: "tool",
-                        content: persist,
-                    });
+                    // Tool results are now automatically saved by the backend chronologically during the stream.
                 }
 
                 if (event.type === "assistant_message") {

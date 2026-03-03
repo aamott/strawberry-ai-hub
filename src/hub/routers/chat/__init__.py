@@ -179,6 +179,25 @@ async def _append_session_message(
     await db.commit()
 
 
+def _format_tool_message(
+    tool_name: str,
+    success: bool,
+    result: Optional[str],
+    error: Optional[str],
+    cached: bool,
+) -> str:
+    """Format tool results for session storage, mirroring frontend format."""
+    output = result if success else (error or "")
+    lines = [
+        f"tool_name={tool_name}",
+        f"success={str(success).lower()}",
+        f"cached={str(cached).lower()}",
+        "",
+        str(output),
+    ]
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -247,7 +266,7 @@ async def chat_completions(
             tool_mode,
         )
         response = await _run_agent_loop(
-            request, device, db, manager, tool_mode=tool_mode
+            request, device, db, manager, tool_mode=tool_mode, session=session
         )
     else:
         logger.info(
@@ -317,6 +336,15 @@ async def _stream_chat_completions(
                     final_assistant_content = str(
                         event.get("content") or ""
                     )
+                elif event.get("type") == "tool_call_result" and session is not None:
+                    formatted = _format_tool_message(
+                        tool_name=event.get("tool_name", ""),
+                        success=event.get("success", False),
+                        result=event.get("result"),
+                        error=event.get("error"),
+                        cached=event.get("cached", False),
+                    )
+                    await _append_session_message(db, session, "tool", formatted)
                 yield _sse(event)
         else:
             # Pass-through: stream the response token-by-token.
@@ -786,6 +814,7 @@ async def _run_agent_loop(
     db: AsyncSession,
     manager: ConnectionManager,
     tool_mode: str = "python_exec",
+    session: Optional[Session] = None,
 ) -> ChatCompletionResponse:
     """Run agent loop with tool execution.
 
@@ -817,6 +846,15 @@ async def _run_agent_loop(
             incoming_usage = event.get("usage")
             if isinstance(incoming_usage, dict):
                 usage = incoming_usage
+        elif str(event.get("type") or "") == "tool_call_result" and session is not None:
+            formatted = _format_tool_message(
+                tool_name=event.get("tool_name", ""),
+                success=event.get("success", False),
+                result=event.get("result"),
+                error=event.get("error"),
+                cached=event.get("cached", False),
+            )
+            await _append_session_message(db, session, "tool", formatted)
 
     if not (final_content or "").strip():
         final_content = (

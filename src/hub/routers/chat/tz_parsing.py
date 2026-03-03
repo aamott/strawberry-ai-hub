@@ -118,7 +118,112 @@ def classify_block_type(block: Any) -> str:
     return type(block).__name__
 
 
-def extract_active_tools_from_history(messages: List[Any]) -> set[str]:  # noqa: C901
+_TOOL_NAME_PATTERN_PLAIN = _re.compile(r"['\"]tool_name['\"]:\s*['\"]([^'\"]+)['\"]")
+_TOOL_NAME_PATTERN_ESCAPED = _re.compile(r'\\\"tool_name\\\"\s*:\s*\\\"([^\\\"]+)\\\"')
+
+
+def _add_tool_name(active_tools: set[str], value: Any) -> None:
+    if isinstance(value, str) and value:
+        active_tools.add(value)
+
+
+def _extract_role_content_tool_calls(msg: Any) -> tuple[Any, Any, Any]:
+    role = (
+        msg.get("role")
+        if isinstance(msg, dict)
+        else getattr(msg, "role", None)
+    )
+    content = (
+        msg.get("content")
+        if isinstance(msg, dict)
+        else getattr(msg, "content", None)
+    )
+    tool_calls = (
+        msg.get("tool_calls")
+        if isinstance(msg, dict)
+        else getattr(msg, "tool_calls", None)
+    )
+    return role, content, tool_calls
+
+
+def _collect_tool_names_from_string(s: str, active_tools: set[str]) -> None:
+    s = s.strip()
+    if not s:
+        return
+
+    if s.startswith("{") or s.startswith("["):
+        try:
+            _collect_tool_names_deep(json.loads(s), active_tools)
+            return
+        except Exception:
+            pass
+
+    for m in _TOOL_NAME_PATTERN_PLAIN.findall(s):
+        active_tools.add(m)
+    for m in _TOOL_NAME_PATTERN_ESCAPED.findall(s):
+        active_tools.add(m)
+
+
+def _collect_tool_names_deep(value: Any, active_tools: set[str]) -> None:
+    """Collect nested tool_name fields from dict/list/string values.
+
+    NOTE (regression guard): This exists because we repeatedly hit a
+    native-mode bug where search results were nested inside
+    ``tool_result.result`` as JSON-encoded strings (escaped quotes).
+    Regex over plain ``str(content)`` alone misses those and can shrink
+    native ``allowed_tools`` to discovery-only when defer-loading is on.
+    """
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if k == "tool_name":
+                _add_tool_name(active_tools, v)
+            _collect_tool_names_deep(v, active_tools)
+        return
+
+    if isinstance(value, list):
+        for item in value:
+            _collect_tool_names_deep(item, active_tools)
+        return
+
+    if isinstance(value, str):
+        _collect_tool_names_from_string(value, active_tools)
+
+
+def _add_tools_from_assistant_calls(tool_calls: Any, active_tools: set[str]) -> None:
+    if not tool_calls:
+        return
+    for tc in tool_calls:
+        if isinstance(tc, dict):
+            fn = tc.get("function")
+            if isinstance(fn, dict):
+                _add_tool_name(active_tools, fn.get("name"))
+            else:
+                _add_tool_name(active_tools, tc.get("name"))
+            continue
+        fn = getattr(tc, "function", None)
+        _add_tool_name(active_tools, getattr(fn, "name", None))
+
+
+def _add_tools_from_content_blocks(content: list[Any], active_tools: set[str]) -> None:
+    for block in content:
+        tc = extract_tool_call_from_block(block)
+        if tc:
+            _add_tool_name(active_tools, tc.get("name"))
+
+        if classify_block_type(block) != "tool_result":
+            _collect_tool_names_deep(block, active_tools)
+            continue
+
+        if isinstance(block, dict):
+            _add_tool_name(active_tools, block.get("name"))
+            _collect_tool_names_deep(block.get("result"), active_tools)
+            continue
+
+        _add_tool_name(active_tools, getattr(block, "name", None))
+        _collect_tool_names_deep(getattr(block, "result", None), active_tools)
+
+
+def extract_active_tools_from_history(messages: List[Any]) -> set[str]:
     """Extract active tool names from conversation history.
 
     A tool is considered active if:
@@ -132,105 +237,19 @@ def extract_active_tools_from_history(messages: List[Any]) -> set[str]:  # noqa:
         Set of active native tool names (e.g. ``Class__method``).
     """
     active_tools: set[str] = set()
-    import re
-
-    # NOTE (regression guard): We have repeatedly hit a native-mode bug where
-    # active tool names were "lost" after discovery because search results were
-    # nested inside tool_result.result as JSON-encoded strings (with escaped
-    # quotes like \"tool_name\"). A plain regex over str(content) misses those,
-    # which collapses allowed_tools to discovery-only when schema defer-loading
-    # is enabled. Keep this extraction path robust and structured-first.
-    def _collect_tool_names_deep(value: Any) -> None:  # noqa: C901
-        if isinstance(value, dict):
-            for k, v in value.items():
-                if k == "tool_name" and isinstance(v, str) and v:
-                    active_tools.add(v)
-                _collect_tool_names_deep(v)
-            return
-        if isinstance(value, list):
-            for item in value:
-                _collect_tool_names_deep(item)
-            return
-        if isinstance(value, str):
-            s = value.strip()
-            if not s:
-                return
-            # Try structured decode first to handle escaped JSON payloads.
-            if s.startswith("{") or s.startswith("["):
-                try:
-                    parsed = json.loads(s)
-                    _collect_tool_names_deep(parsed)
-                    return
-                except Exception:
-                    pass
-            # Fallback regex for plain text / repr-like payloads.
-            pattern_plain = r"['\"]tool_name['\"]:\s*['\"]([^'\"]+)['\"]"
-            pattern_escaped = r'\\\"tool_name\\\"\s*:\s*\\\"([^\\\"]+)\\\"'
-            for m in re.findall(pattern_plain, s):
-                active_tools.add(m)
-            for m in re.findall(pattern_escaped, s):
-                active_tools.add(m)
 
     for msg in messages:
-        role = (
-            msg.get("role") if isinstance(msg, dict)
-            else getattr(msg, "role", None)
-        )
-        content = (
-            msg.get("content") if isinstance(msg, dict)
-            else getattr(msg, "content", None)
-        )
-        tool_calls = (
-            msg.get("tool_calls") if isinstance(msg, dict)
-            else getattr(msg, "tool_calls", None)
-        )
+        role, content, tool_calls = _extract_role_content_tool_calls(msg)
 
-        # 1. Discover tools from explicit assistant tool call metadata.
-        if role == "assistant" and tool_calls:
-            for tc in tool_calls:
-                if isinstance(tc, dict):
-                    if "function" in tc and isinstance(tc["function"], dict):
-                        name = tc["function"].get("name")
-                        if name:
-                            active_tools.add(name)
-                    elif "name" in tc:
-                        active_tools.add(tc["name"])
-                elif hasattr(tc, "function") and hasattr(tc.function, "name"):
-                    active_tools.add(tc.function.name)
+        if role == "assistant":
+            _add_tools_from_assistant_calls(tool_calls, active_tools)
 
-        # 2. Discover tools from structured content blocks.
-        # In native mode we store assistant raw blocks and user tool_result
-        # blocks directly in `content`, so parse that structure first.
         if isinstance(content, list):
-            for block in content:
-                tc = extract_tool_call_from_block(block)
-                if tc and tc.get("name"):
-                    active_tools.add(str(tc["name"]))
-
-                block_type = ""
-                if isinstance(block, dict):
-                    block_type = str(block.get("type") or "")
-                elif hasattr(block, "type"):
-                    block_type = str(getattr(block, "type") or "")
-                if block_type == "tool_result":
-                    # Capture the called tool directly and also crawl result data.
-                    if isinstance(block, dict):
-                        name = block.get("name")
-                        if name:
-                            active_tools.add(str(name))
-                        _collect_tool_names_deep(block.get("result"))
-                    else:
-                        name = getattr(block, "name", None)
-                        if name:
-                            active_tools.add(str(name))
-                        _collect_tool_names_deep(getattr(block, "result", None))
-                else:
-                    _collect_tool_names_deep(block)
+            _add_tools_from_content_blocks(content, active_tools)
             continue
 
-        # 3. Fallback for string content (pass-through / legacy forms).
         if content:
-            _collect_tool_names_deep(content)
+            _collect_tool_names_deep(content, active_tools)
 
     return active_tools
 

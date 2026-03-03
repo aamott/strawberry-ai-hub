@@ -39,10 +39,13 @@ would you like the weather in?") and just fulfill the user's request.
 
 A good time to clarify: user wants to write a new app. Get the requirements!
 A bad time to clarify: user wants the weather in Seattle. Just run the tool
-and give it to them!
+and give it to them. If defaults aren't provided, use the most common
+defaults unless genuinely needed.
 
 In the case of smart homes, there may be many odd names. Try to use the name
-they give you. If you can't find it, ask clarification. 
+they give you. If you can't find it, ask clarification.
+
+Use as few tool calls as possible to fulfill the request. 
 """
 
 

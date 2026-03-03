@@ -485,8 +485,9 @@ def _handle_no_tool_calls(
     if _should_retry_empty_text(
         had_tool_execution, content, already_retried
     ):
+        nudge = _get_empty_text_nudge(had_tool_execution)
         messages.append(
-            {"role": "user", "content": _EMPTY_TEXT_NUDGE}
+            {"role": "user", "content": nudge}
         )
         return "retry"
     return "done"
@@ -499,17 +500,22 @@ def _should_retry_empty_text(
 ) -> bool:
     """Check if we should nudge the LLM for a text response."""
     return (
-        had_tool_execution
-        and not content.strip()
+        not content.strip()
         and not already_retried
     )
 
 
-_EMPTY_TEXT_NUDGE = (
-    "[System Note] The previous response contained no text. "
-    "Do NOT call tools again. Respond now in natural language "
-    "using the tool results above."
-)
+def _get_empty_text_nudge(had_tool_execution: bool) -> str:
+    if had_tool_execution:
+        return (
+            "[System Note] The previous response contained no text. "
+            "Do NOT call tools again. Respond now in natural language "
+            "using the tool results above."
+        )
+    return (
+        "[System Note] The previous response contained no text. "
+        "Please provide a response or call a tool to fulfill the user's request."
+    )
 
 _DISCOVERY_LIMIT_NUDGE = (
     "[System Note] You already have the data you need from previous "
@@ -560,7 +566,7 @@ def _build_iteration_kwargs(
             " (all prior calls were skipped as duplicates)."
         )
         iter_kwargs["tool_choice"] = "none"
-        nudge = _EMPTY_TEXT_NUDGE
+        nudge = _get_empty_text_nudge(had_execution)
         messages.append({"role": "user", "content": nudge})
         return iter_kwargs, {
             "type": "injected_message",
@@ -663,8 +669,13 @@ async def _force_text_fallback(
     logger.debug(
         "[Agent Loop] Running text fallback inference"
     )
+    # At fallback, we've exhausted everything, so force just natural language.
+    nudge = (
+        "[System Note] The previous response contained no text. "
+        "Please summarize your findings or respond to the user in natural language."
+    )
     messages.append(
-        {"role": "user", "content": _EMPTY_TEXT_NUDGE}
+        {"role": "user", "content": nudge}
     )
     fallback_kwargs = dict(tz_kwargs)
     fallback_kwargs["tool_choice"] = "none"
@@ -780,7 +791,7 @@ async def _agent_loop_events(
                 yield {
                     "type": "injected_message",
                     "role": "user",
-                    "content": _EMPTY_TEXT_NUDGE,
+                    "content": _get_empty_text_nudge(state.had_any_tool_execution),
                 }
                 continue
 

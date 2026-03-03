@@ -236,11 +236,10 @@ def _inject_native_tool_results(
 ) -> dict[str, Any]:
     """Native mode: structured tool_result blocks + guidance.
 
-    Guidance is appended directly to the end of the `result` string within
-    the `tool_result` block. We do this because Gemini's API expects
-    function-response turns to strictly contain `functionResponse` parts,
-    and TensorZero/Gemini often drops separate text blocks or consecutive
-    user messages containing steering text.
+    Guidance is embedded inside `tool_result.result` JSON payloads (not as a
+    separate text block). We do this because Gemini's function-response turns
+    are strict, and mixed `tool_result` + `text` content has repeatedly caused
+    dropped/misaligned context in native mode.
     """
     messages.append({"role": "assistant", "content": raw_blocks})
 
@@ -253,10 +252,8 @@ def _inject_native_tool_results(
     blocks = _build_native_tool_result_blocks(
         tool_calls,
         per_tool_results,
+        aggregate_guidance=guidance,
     )
-
-    if guidance:
-        blocks.append({"type": "text", "text": guidance})
 
     messages.append({"role": "user", "content": blocks})
 
@@ -337,12 +334,16 @@ def build_aggregate_guidance(
 def _build_native_tool_result_blocks(
     tool_calls: list[dict[str, Any]],
     per_tool_results: list[dict[str, Any]],
+    aggregate_guidance: str = "",
 ) -> list[dict[str, Any]]:
     """Build TensorZero ``tool_result`` content blocks for native mode.
 
     Args:
         tool_calls: The calls extracted from the previous response.
         per_tool_results: Corresponding ``tool_call_result`` events.
+        aggregate_guidance: Optional guidance that must remain inside
+            function/tool-response payloads. Intentionally not emitted as
+            separate text blocks to avoid native-mode context loss regressions.
 
     Returns:
         List of ``{"type": "tool_result", ...}`` dicts.
@@ -354,7 +355,7 @@ def _build_native_tool_result_blocks(
 
     blocks: list[dict[str, Any]] = []
 
-    for tc in tool_calls:
+    for idx, tc in enumerate(tool_calls):
         tcid = str(tc.get("id") or "")
         evt = result_by_id.get(tcid, {})
 
@@ -371,6 +372,14 @@ def _build_native_tool_result_blocks(
                 or evt.get("error_msg")
                 or "(no output)"
             }
+
+        # NOTE (regression guard): Do NOT append guidance as a separate
+        # {"type":"text"} block in native mode. This exact issue has recurred
+        # and can cause Gemini/TensorZero to drop or ignore tool-response turns.
+        # Keep guidance inside tool_result.result JSON so the turn remains
+        # function-response-only.
+        if aggregate_guidance and idx == (len(tool_calls) - 1):
+            payload["_strawberry_guidance"] = aggregate_guidance
 
         result_str = json.dumps(payload, default=str)
 

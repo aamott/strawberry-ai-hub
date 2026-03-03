@@ -151,7 +151,8 @@ class HubPythonExecToolMode(ToolModeProvider):
         return """\
 ## Available Tools
 
-1) search_skills(query) - Find skills by keyword.
+1) search_skills(query) - Find skills by keyword. Might require a few queries
+   to find the right skill.
 2) describe_function(path) - Get full signature and docstring for a
    skill method.
 3) python_exec(code) - Execute Python code to call skills."""
@@ -173,7 +174,8 @@ Example: search_skills(query="weather")"""
 ## describe_function
 
 describe_function(path) returns the full signature and docstring
-for a skill method. Use it when you need parameter details."""
+for a skill method. Use it when you need more details about a skill method
+or a skill isn't behaving as expected."""
 
     def execution_section(self) -> str:
         """Describe python_exec for Hub (always devices.*)."""
@@ -183,8 +185,10 @@ for a skill method. Use it when you need parameter details."""
 Execute skills via python_exec. Syntax:
   python_exec(code="print(devices.<device>.<Skill>.<method>(...))")
 
-Always wrap calls in print() so you can see the result.
-Device-agnostic skills route through devices.hub.*"""
+Always print() the result of the function call so you can see it.
+<device> has no default value, so you must specify it based on available
+devices.
+"""
 
     def examples_section(self) -> str:
         """Provide Hub-specific examples."""
@@ -198,12 +202,19 @@ Weather:
      devices.<device>.WeatherSkill
      .get_current_weather('San Francisco, CA'))")
 
-Documentation lookup:
-- User: "Look up React docs"
-  a) search_skills(query="documentation")
+Smart Home:
+- User: "Turn on the rocketship lamp"
+  a) search_skills(query="smart home")
   b) python_exec(code="print(
-     devices.<device>.Context7Skill
-     .resolve_library_id(libraryName='react'))")"""
+     devices.<device>.HomeAssistantSkill__HassTurnOn(
+     entity_id='light.rocketship_lamp'))")
+  c) Respond naturally with the result.
+  d) User: "Now turn it off"
+  e) python_exec(code="print(
+     devices.<device>.HomeAssistantSkill__HassTurnOff(
+     entity_id='light.rocketship_lamp'))")
+  f) Respond naturally with the result.
+     """
 
     def rules_section(self) -> str:
         """Minimal rules — most steering is via tool_result_guidance."""

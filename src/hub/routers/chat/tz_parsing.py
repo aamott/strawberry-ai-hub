@@ -118,7 +118,7 @@ def classify_block_type(block: Any) -> str:
     return type(block).__name__
 
 
-def extract_active_tools_from_history(messages: List[Any]) -> set[str]:
+def extract_active_tools_from_history(messages: List[Any]) -> set[str]:  # noqa: C901
     """Extract active tool names from conversation history.
 
     A tool is considered active if:
@@ -140,7 +140,7 @@ def extract_active_tools_from_history(messages: List[Any]) -> set[str]:
     # quotes like \"tool_name\"). A plain regex over str(content) misses those,
     # which collapses allowed_tools to discovery-only when schema defer-loading
     # is enabled. Keep this extraction path robust and structured-first.
-    def _collect_tool_names_deep(value: Any) -> None:
+    def _collect_tool_names_deep(value: Any) -> None:  # noqa: C901
         if isinstance(value, dict):
             for k, v in value.items():
                 if k == "tool_name" and isinstance(v, str) and v:

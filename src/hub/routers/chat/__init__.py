@@ -638,8 +638,11 @@ async def _finalize_agent_content(
     if (content or "").strip():
         return content
 
-    # Run extra inference with tool_choice=none
-    fb = await _force_text_fallback(
+    # Enforce that the final assistant turn is natural-language text.
+    # Regression guard: providers can occasionally return empty/non-text
+    # content blocks at the end of a tool loop; do not return control to
+    # the user until we have attempted explicit text-only retries.
+    fb = await _force_text_fallback_with_retries(
         messages, system_prompt, tz_kwargs
     )
     if fb.strip():
@@ -693,6 +696,59 @@ async def _force_text_fallback(
             "[Agent Loop] Text fallback failed"
         )
         return ""
+
+
+async def _force_text_fallback_with_retries(
+    messages: list[dict[str, Any]],
+    system_prompt: str,
+    tz_kwargs: dict[str, Any],
+    max_attempts: int = 2,
+) -> str:
+    """Retry forced text fallback a bounded number of times.
+
+    This is stricter than a single fallback call: we explicitly prevent
+    returning an empty final assistant message to the user unless all
+    bounded text-only retries fail.
+    """
+    for attempt in range(max_attempts):
+        if attempt == 0:
+            nudge = (
+                "[System Note] Final response must be plain natural-language text. "
+                "Do NOT call tools. Respond to the user now."
+            )
+        else:
+            nudge = (
+                "[System Note] Your previous response still had no usable text. "
+                "Return ONLY a natural-language answer for the user now."
+            )
+
+        messages.append({"role": "user", "content": nudge})
+
+        fallback_kwargs = dict(tz_kwargs)
+        fallback_kwargs["tool_choice"] = "none"
+        try:
+            response = await tz_inference(
+                messages=messages,
+                function_name="chat",
+                system=system_prompt,
+                **fallback_kwargs,
+            )
+            content, _, _, _ = parse_response_blocks(response)
+            if content.strip():
+                return content
+            logger.warning(
+                "[Agent Loop] Forced text retry returned empty content. attempt=%d/%d",
+                attempt + 1,
+                max_attempts,
+            )
+        except Exception:
+            logger.exception(
+                "[Agent Loop] Forced text retry failed. attempt=%d/%d",
+                attempt + 1,
+                max_attempts,
+            )
+
+    return ""
 
 
 @dataclass

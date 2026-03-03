@@ -506,15 +506,20 @@ def _should_retry_empty_text(
 
 
 def _get_empty_text_nudge(had_tool_execution: bool) -> str:
+    # NOTE (behavior contract): when the model returns an empty turn, we
+    # explicitly ask for a brief user-facing progress update and then let it
+    # continue the task. This avoids surfacing raw tool syntax as final output
+    # while still preserving multi-step execution when more work is needed.
     if had_tool_execution:
         return (
-            "[System Note] The previous response contained no text. "
-            "Do NOT call tools again. Respond now in natural language "
-            "using the tool results above."
+            "[System Note] The last response was empty. Briefly let the user "
+            "know you're working on their request, then continue with the next "
+            "step. If the task is complete, let the user know now."
         )
     return (
-        "[System Note] The previous response contained no text. "
-        "Please provide a response or call a tool to fulfill the user's request."
+        "[System Note] The last response was empty. Briefly let the user know "
+        "you're working on their request, then continue with the next best step. "
+        "If the task is complete, let the user know."
     )
 
 _DISCOVERY_LIMIT_NUDGE = (
@@ -713,13 +718,15 @@ async def _force_text_fallback_with_retries(
     for attempt in range(max_attempts):
         if attempt == 0:
             nudge = (
-                "[System Note] Final response must be plain natural-language text. "
-                "Do NOT call tools. Respond to the user now."
+                "[System Note] The last response was empty. Briefly let the user "
+                "know you're working on their request. If the task is complete, "
+                "let the user know now. Respond in natural-language text."
             )
         else:
             nudge = (
-                "[System Note] Your previous response still had no usable text. "
-                "Return ONLY a natural-language answer for the user now."
+                "[System Note] The last response was still empty. Briefly update "
+                "the user that you're still working, or provide the completed "
+                "answer now. Respond in natural-language text."
             )
 
         messages.append({"role": "user", "content": nudge})

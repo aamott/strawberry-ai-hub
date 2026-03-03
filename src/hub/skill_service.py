@@ -737,9 +737,28 @@ class HubSkillService:
         except ValueError:
             return {"error": f"Invalid native tool name: {tool_name}"}
 
-        # Pop the synthetic device routing parameter
+        # Pop synthetic routing parameters before forwarding kwargs to the
+        # actual skill method.
+        #
+        # NOTE (compatibility / recurring bug guard):
+        # Some model/tooling paths still emit ``default_api`` instead of
+        # ``device``. If we pass ``default_api`` through, skills receive an
+        # unexpected keyword argument and fail. Treat it as a routing hint and
+        # prefer normal auto-routing when no explicit ``device`` is provided.
         args = dict(arguments or {})
         device_name = args.pop("device", None)
+        default_api = args.pop("default_api", None)
+
+        has_explicit_device = bool(device_name and str(device_name).strip())
+        if (not has_explicit_device) and default_api is not None:
+            default_api_str = str(default_api).strip()
+            if default_api_str:
+                logger.info(
+                    "[Hub Native Tool] Received deprecated routing arg default_api=%r "
+                    "for %s; using default device selection.",
+                    default_api_str,
+                    tool_name,
+                )
 
         if device_name:
             device_name = normalize_device_name(device_name)

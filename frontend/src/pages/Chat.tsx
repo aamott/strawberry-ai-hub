@@ -160,10 +160,9 @@ export function Chat() {
         setMessages(prev => [...prev, tempUserMsg]);
 
         try {
-            // 1. Save user message
-            await api.post(`/sessions/${currentSessionId}/messages`, { role: "user", content });
+            // The backend automatically saves the user message when session_id is provided.
 
-            // 2. Stream tool calls/results and the final assistant message.
+            // Stream tool calls/results and the final assistant message.
             const history: HubChatMessage[] = [...messages, { id: "ctx-user", role: "user", content }]
                 .filter(m => m.context !== false)
                 .map((m) => ({
@@ -242,12 +241,7 @@ export function Chat() {
                 }
             }
 
-            if (finalAssistant !== null) {
-                await api.post(`/sessions/${currentSessionId}/messages`, {
-                    role: "assistant",
-                    content: finalAssistant,
-                });
-            }
+            // The backend automatically saves the final assistant message at the end of the stream.
 
             await fetchSessions(); // Update last_activity + message_count
 

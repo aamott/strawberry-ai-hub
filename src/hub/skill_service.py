@@ -842,7 +842,8 @@ class HubSkillService:
 
     async def get_native_tool_schemas(
         self,
-        limit: int = 30,
+        limit: int = 15,
+        active_tool_names: Optional[set[str]] = None,
     ) -> tuple[list[Dict[str, Any]], list[str]]:
         """Build native tool schemas for all registered skills.
 
@@ -851,7 +852,8 @@ class HubSkillService:
         tool definition.
 
         Args:
-            limit: Maximum number of tool schemas to generate.
+            limit: Maximum number of tool schemas to generate natively.
+            active_tool_names: Set of active tool names to inject if limit exceeded.
 
         Returns:
             Tuple of ``(tool_schemas, tool_names)``.
@@ -882,7 +884,9 @@ class HubSkillService:
             for r in rows
         ]
 
-        return build_all_tool_schemas(skills, limit=limit)
+        return build_all_tool_schemas(
+            skills, limit=limit, active_tool_names=active_tool_names
+        )
 
     async def get_system_prompt(
         self,

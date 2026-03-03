@@ -414,7 +414,8 @@ def parse_tool_name(tool_name: str) -> Tuple[str, str]:
 def build_all_tool_schemas(
     skills: List[Dict[str, Any]],
     *,
-    limit: int = 30,
+    limit: int = 15,
+    active_tool_names: Optional[set[str]] = None,
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
     """Build tool schemas for a list of skill rows.
 
@@ -426,9 +427,9 @@ def build_all_tool_schemas(
 
     Args:
         skills: Skill metadata dicts (typically from a DB query).
-        limit: Maximum number of tool schemas to produce.  Excess
-            methods are silently dropped (the LLM can still find them
-            via ``search_skills``).
+        limit: Maximum number of tool schemas to produce without filtering.
+        active_tool_names: Set of active tool names (Class__method). If provided
+            and len(skills) > limit, only generates schemas for these active tools.
 
     Returns:
         Tuple of ``(tool_schemas, tool_names)`` where *tool_schemas*
@@ -439,6 +440,10 @@ def build_all_tool_schemas(
     schemas: List[Dict[str, Any]] = []
     names: List[str] = []
 
+    # If we have more skills than our limit, we defer loading. We only
+    # build schemas for tools that are currently "active" in the chat context.
+    defer_loading = limit > 0 and len(skills) > limit
+
     for skill in skills:
         cn = skill["class_name"]
         fn = skill["function_name"]
@@ -446,6 +451,13 @@ def build_all_tool_schemas(
 
         if key in seen:
             continue
+
+        tool_name = build_tool_name(cn, fn)
+
+        if defer_loading:
+            if active_tool_names is None or tool_name not in active_tool_names:
+                continue
+
         seen.add(key)
 
         schema = build_tool_schema(
@@ -465,14 +477,5 @@ def build_all_tool_schemas(
 
         schemas.append(schema)
         names.append(schema["name"])
-
-    if limit > 0 and len(schemas) > limit:
-        logger.info(
-            "Native tool limit exceeded (%d > %d); hiding all native tools. "
-            "Remaining skills available via search_skills.",
-            len(schemas),
-            limit,
-        )
-        return [], []
 
     return schemas, names

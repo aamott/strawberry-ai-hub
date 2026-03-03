@@ -159,7 +159,7 @@ async def execute_tool_calls(
             iteration,
             tool_mode=tool_mode,
         )
-        if was_executed:
+        if was_executed and tc.get("name") not in DISCOVERY_TOOL_NAMES:
             had_execution = True
 
         success, result_str, error_str = format_tool_result(result)
@@ -253,8 +253,10 @@ def _inject_native_tool_results(
     blocks = _build_native_tool_result_blocks(
         tool_calls,
         per_tool_results,
-        guidance,
     )
+
+    if guidance:
+        blocks.append({"type": "text", "text": guidance})
 
     messages.append({"role": "user", "content": blocks})
 
@@ -335,15 +337,12 @@ def build_aggregate_guidance(
 def _build_native_tool_result_blocks(
     tool_calls: list[dict[str, Any]],
     per_tool_results: list[dict[str, Any]],
-    guidance: str = "",
 ) -> list[dict[str, Any]]:
     """Build TensorZero ``tool_result`` content blocks for native mode.
 
     Args:
         tool_calls: The calls extracted from the previous response.
         per_tool_results: Corresponding ``tool_call_result`` events.
-        guidance: Optional aggregate steering text (e.g. "Now respond")
-            to append directly to the final tool result string.
 
     Returns:
         List of ``{"type": "tool_result", ...}`` dicts.
@@ -354,9 +353,6 @@ def _build_native_tool_result_blocks(
         result_by_id[tcid] = evt
 
     blocks: list[dict[str, Any]] = []
-
-    # We apply the guidance to the very last tool call in this batch
-    last_tcid = str(tool_calls[-1].get("id") or "") if tool_calls else ""
 
     for tc in tool_calls:
         tcid = str(tc.get("id") or "")
@@ -375,10 +371,6 @@ def _build_native_tool_result_blocks(
                 or evt.get("error_msg")
                 or "(no output)"
             }
-
-        # Inject guidance into the last block's JSON
-        if guidance and tcid == last_tcid:
-            payload["_system_guidance"] = guidance
 
         result_str = json.dumps(payload, default=str)
 
@@ -402,6 +394,7 @@ def _build_native_tool_result_blocks(
 async def build_native_tz_kwargs(
     skill_service: Any,
     tool_mode: str,
+    active_tool_names: Optional[set[str]] = None,
 ) -> dict[str, Any]:
     """Build extra TensorZero kwargs for native tool mode.
 
@@ -415,7 +408,9 @@ async def build_native_tz_kwargs(
     if tool_mode != "native":
         return {}
 
-    tool_schemas, tool_names = await skill_service.get_native_tool_schemas()
+    tool_schemas, tool_names = await skill_service.get_native_tool_schemas(
+        active_tool_names=active_tool_names
+    )
 
     kwargs: dict[str, Any] = {
         "allowed_tools": list(DISCOVERY_TOOL_NAMES) + tool_names,

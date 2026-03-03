@@ -114,6 +114,51 @@ def classify_block_type(block: Any) -> str:
     return type(block).__name__
 
 
+def extract_active_tools_from_history(messages: List[Any]) -> set[str]:
+    """Extract active tool names from conversation history.
+
+    A tool is considered active if:
+    1. The assistant has called it previously (found in tool_calls).
+    2. It was returned in a search_skills result ("tool_name": "...").
+
+    Args:
+        messages: The chat message history (list of dicts or ChatMessage objects).
+
+    Returns:
+        Set of active native tool names (e.g. ``Class__method``).
+    """
+    active_tools: set[str] = set()
+    import re
+
+    for msg in messages:
+        role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", None)
+        content = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", None)
+        tool_calls = msg.get("tool_calls") if isinstance(msg, dict) else getattr(msg, "tool_calls", None)
+
+        # 1. Discover tools from previous assistant tool calls
+        if role == "assistant" and tool_calls:
+            for tc in tool_calls:
+                if isinstance(tc, dict):
+                    if "function" in tc and isinstance(tc["function"], dict):
+                        name = tc["function"].get("name")
+                        if name:
+                            active_tools.add(name)
+                    elif "name" in tc:
+                        active_tools.add(tc["name"])
+                elif hasattr(tc, "function") and hasattr(tc.function, "name"):
+                    active_tools.add(tc.function.name)
+
+        # 2. Discover tools from ANY content block (because tool results
+        # are mapped to role="user" for TensorZero).
+        if content:
+            content_str = str(content)
+            matches = re.findall(r"['\"]tool_name['\"]:\s*['\"]([^'\"]+)['\"]", content_str)
+            for m in matches:
+                active_tools.add(m)
+
+    return active_tools
+
+
 # ---------------------------------------------------------------------------
 # Response-level helpers
 # ---------------------------------------------------------------------------

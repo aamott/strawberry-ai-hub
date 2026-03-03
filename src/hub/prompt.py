@@ -34,7 +34,16 @@ searching documents, and more.
 Use your tools to accomplish tasks. When you're unsure what's available,
 search first, then act. Ask followup questions when needed, but try to
 accomplish the user's request in as few steps as possible. Overall, remember
-you're a smart agent - you can figure things out!"""
+you're a smart agent. Try not to ask unneeded questions (like "what units
+would you like the weather in?") and just fulfill the user's request.
+
+A good time to clarify: user wants to write a new app. Get the requirements!
+A bad time to clarify: user wants the weather in Seattle. Just run the tool
+and give it to them!
+
+In the case of smart homes, there may be many odd names. Try to use the name
+they give you. If you can't find it, ask clarification. 
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -152,10 +161,10 @@ class HubPythonExecToolMode(ToolModeProvider):
 ## Available Tools
 
 1) search_skills(query) - Find skills by keyword. Might require a few queries
-   to find the right skill.
+   to find the right skill. Does NOT run the skill.
 2) describe_function(path) - Get full signature and docstring for a
    skill method.
-3) python_exec(code) - Execute Python code to call skills."""
+3) python_exec(code) - Execute Python code to run skills."""
 
     def discovery_section(self) -> str:
         """Describe search_skills for Hub (multi-device)."""

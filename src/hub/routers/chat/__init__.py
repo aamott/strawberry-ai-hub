@@ -57,6 +57,9 @@ from .tool_execution import (
     inject_tool_results as _inject_tool_results,
 )
 from .tz_parsing import (
+    extract_active_tools_from_history as _extract_active_tools_from_history,
+)
+from .tz_parsing import (
     extract_content,
     extract_model,
     extract_text_from_block,
@@ -542,7 +545,7 @@ def _build_iteration_kwargs(
 
     Checks three conditions that can force ``tool_choice='none'``:
     1. All previous-iteration tool calls were skipped (duplicates)
-    2. A skill tool already executed — force text on next iteration
+    2. Max continuous tool jumps exceeded (loop-safety)
     3. Discovery-after-execution limit exceeded
 
     Returns:
@@ -558,6 +561,26 @@ def _build_iteration_kwargs(
         )
         iter_kwargs["tool_choice"] = "none"
         nudge = _EMPTY_TEXT_NUDGE
+        messages.append({"role": "user", "content": nudge})
+        return iter_kwargs, {
+            "type": "injected_message",
+            "role": "user",
+            "content": nudge,
+        }
+
+    # Loop safety limit
+    max_continuous_jumps = 5
+    if iteration >= max_continuous_jumps:
+        logger.info(
+            "[Agent Loop] Max continuous tool jumps exceeded (%d); "
+            "forcing text-only response.",
+            iteration,
+        )
+        iter_kwargs["tool_choice"] = "none"
+        nudge = (
+            "[System Note] You have made too many consecutive tool calls. "
+            "Do NOT call any more tools. Please summarize your findings to the user NOW."
+        )
         messages.append({"role": "user", "content": nudge})
         return iter_kwargs, {
             "type": "injected_message",
@@ -714,14 +737,15 @@ async def _agent_loop_events(
     )
     max_iterations = settings.agent_max_iterations
 
-    tz_kwargs = await _build_native_tz_kwargs(
-        skill_service, tool_mode
-    )
-
     discovery_limit = provider.max_discovery_after_execution()
     state = _AgentLoopState()
 
     for iteration in range(max_iterations):
+        active_tools = _extract_active_tools_from_history(messages)
+        tz_kwargs = await _build_native_tz_kwargs(
+            skill_service, tool_mode, active_tool_names=active_tools,
+        )
+
         iter_kwargs, nudge_event = _build_iteration_kwargs(
             tz_kwargs, discovery_limit,
             state.discovery_after_exec,

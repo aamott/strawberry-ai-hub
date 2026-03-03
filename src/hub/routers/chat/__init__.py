@@ -609,17 +609,16 @@ async def _finalize_agent_content(
     if (content or "").strip():
         return content
 
-    # Native mode: extra inference with tool_choice=none
-    if had_tool_exec and tool_mode == "native":
-        fb = await _native_text_fallback(
-            messages, system_prompt, tz_kwargs
-        )
-        if fb.strip():
-            return fb
+    # Run extra inference with tool_choice=none
+    fb = await _force_text_fallback(
+        messages, system_prompt, tz_kwargs
+    )
+    if fb.strip():
+        return fb
 
     logger.warning(
-        "[Agent Loop] Empty model response after tool execution"
-        " loop. variant=%s",
+        "[Agent Loop] Empty model response after empty-text fallback."
+        " variant=%s",
         model_used,
     )
     return (
@@ -628,18 +627,18 @@ async def _finalize_agent_content(
     )
 
 
-async def _native_text_fallback(
+async def _force_text_fallback(
     messages: list[dict[str, Any]],
     system_prompt: str,
     tz_kwargs: dict[str, Any],
 ) -> str:
-    """Force-generate a text summary after a native tool loop.
+    """Force-generate a text summary after an empty response.
 
     Appends a nudge message and calls inference with
     ``tool_choice='none'`` so the model must produce text.
     """
     logger.debug(
-        "[Agent Loop][native] Running text fallback inference"
+        "[Agent Loop] Running text fallback inference"
     )
     messages.append(
         {"role": "user", "content": _EMPTY_TEXT_NUDGE}
@@ -657,7 +656,7 @@ async def _native_text_fallback(
         return content
     except Exception:
         logger.exception(
-            "[Agent Loop][native] Text fallback failed"
+            "[Agent Loop] Text fallback failed"
         )
         return ""
 

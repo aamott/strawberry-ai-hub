@@ -45,7 +45,8 @@ defaults unless genuinely needed.
 In the case of smart homes, there may be many odd names. Try to use the name
 they give you. If you can't find it, ask clarification.
 
-Use as few tool calls as possible to fulfill the request. 
+Use as few tool calls as possible to fulfill the request, but if you have
+multiple tools to call, do so in a single message.
 """
 
 

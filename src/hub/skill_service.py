@@ -605,6 +605,10 @@ class HubSkillService:
         Supported tool_name formats:
         - method name only: `get_current_weather`
         - qualified: `WeatherSkill.get_current_weather`
+
+        When a bare method name matches multiple *distinct* skill classes,
+        the call is rejected with an error listing the qualified alternatives
+        to avoid ambiguous routing.
         """
         class_name: Optional[str] = None
         method_name: str = tool_name
@@ -646,30 +650,27 @@ class HubSkillService:
                 )
             }
 
+        # Reject ambiguous bare method names: if no class was specified
+        # and matches span multiple distinct skill classes, ask the LLM
+        # to disambiguate instead of silently routing to one.
+        if not class_name:
+            ambiguity_err = self._check_ambiguous_matches(
+                tool_name, method_name, matches,
+            )
+            if ambiguity_err:
+                return ambiguity_err
+
         if len(matches) > 1:
-            # Sort matches: connected devices first
-            connected_device_ids = set()
-            if self.connection_manager:
-                connected_device_ids = set(
-                    self.connection_manager.get_connected_devices()
-                )
-
-            def _sort_matches(match):
-                skill, device = match
-                return (
-                    device.id not in connected_device_ids,
-                    normalize_device_name(device.name),
-                )
-
-            matches.sort(key=_sort_matches)
+            self._sort_matches_by_connected(matches)
 
         # Pick the top match (which is now the most preferred connected device)
         skill, device = matches[0]
 
         # Route to the owning device. The DevicesProxy expects a normalized device name.
         device_name = normalize_device_name(device.name)
-        logger.info(
-            "[Hub Dynamic Skill] Routing tool '%s' -> devices.%s.%s.%s(kwargs=%s)",
+        logger.warning(
+            "[Hub Dynamic Skill] Fallback routing tool '%s' -> "
+            "devices.%s.%s.%s(kwargs=%s)",
             tool_name,
             device_name,
             skill.class_name,
@@ -694,6 +695,68 @@ class HubSkillService:
                 e,
             )
             return {"error": f"{type(e).__name__}: {e}"}
+
+    @staticmethod
+    def _check_ambiguous_matches(
+        tool_name: str,
+        method_name: str,
+        matches: list,
+    ) -> Optional[Dict[str, Any]]:
+        """Return an error dict if matches span multiple distinct classes.
+
+        Args:
+            tool_name: Original tool name from the LLM.
+            method_name: Parsed method name.
+            matches: List of ``(Skill, Device)`` tuples from the DB.
+
+        Returns:
+            Error dict asking the LLM to disambiguate, or ``None``
+            if the matches are unambiguous (single class).
+        """
+        if len(matches) <= 1:
+            return None
+        distinct_classes = sorted({s.class_name for s, _ in matches})
+        if len(distinct_classes) <= 1:
+            return None
+
+        qualified = [f"{cls}.{method_name}" for cls in distinct_classes]
+        logger.warning(
+            "[Hub Dynamic Skill] Ambiguous tool '%s' matches %d "
+            "classes: %s — rejecting",
+            tool_name,
+            len(distinct_classes),
+            ", ".join(distinct_classes),
+        )
+        return {
+            "error": (
+                f"Ambiguous tool name '{tool_name}' matches "
+                f"multiple skills: {', '.join(qualified)}. "
+                "Please use the fully-qualified name "
+                "(e.g. SkillClass.method_name) or the native "
+                "tool name (SkillClass__method_name)."
+            )
+        }
+
+    def _sort_matches_by_connected(self, matches: list) -> None:
+        """Sort matches in place: connected devices first, then by name.
+
+        Args:
+            matches: Mutable list of ``(Skill, Device)`` tuples.
+        """
+        connected_device_ids: set = set()
+        if self.connection_manager:
+            connected_device_ids = set(
+                self.connection_manager.get_connected_devices()
+            )
+
+        def _key(match):
+            _skill, device = match
+            return (
+                device.id not in connected_device_ids,
+                normalize_device_name(device.name),
+            )
+
+        matches.sort(key=_key)
 
     async def _execute_python(self, code: str) -> Dict[str, Any]:
         """Execute Python code with access to devices proxy using asteval.

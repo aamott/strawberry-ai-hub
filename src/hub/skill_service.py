@@ -65,20 +65,24 @@ class DevicesProxy:
         devices: Dict[str, Device],
         connected_device_ids: set[str],
     ) -> list[str]:
-        """Sort group devices with connected ones first, then alphabetical."""
+        """Sort group devices with connected ones first, then alphabetical.
+
+        Args:
+            unique_devices: Normalized device names to sort.
+            devices: Mapping of normalized_name → Device.
+            connected_device_ids: Set of device IDs that are connected.
+
+        Uses a precomputed name→device.id map for O(1) lookups.
+        """
+        # Precompute normalized_name → device.id for O(1) connected checks
+        name_to_device_id = {
+            d_name: d.id for d_name, d in devices.items()
+        }
 
         def _sort_key(d_name: str) -> tuple[bool, str]:
-            d_id = next(
-                (
-                    did
-                    for did, d in devices.items()
-                    if normalize_device_name(d.name) == d_name
-                ),
-                None,
-            )
-            if d_id:
-                d_obj = devices[d_id]
-                is_connected = d_obj.id in connected_device_ids
+            device_id = name_to_device_id.get(d_name)
+            if device_id:
+                is_connected = device_id in connected_device_ids
                 return (not is_connected, d_name)
             return (True, d_name)
 

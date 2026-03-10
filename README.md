@@ -1,6 +1,6 @@
 # Strawberry AI - Hub
 
-Central server for the Strawberry AI platform.
+Central server for the Strawberry AI platform. For the Client, see [Strawberry AI Client](https://github.com/aamott/strawberry-ai-client)
 
 ## Features
 
